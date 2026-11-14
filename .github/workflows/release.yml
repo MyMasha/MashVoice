@@ -20,7 +20,6 @@ jobs:
         run: cargo test --workspace
 
   publish-tauri:
-    needs: test-rust-workspace
     strategy:
       fail-fast: false
       matrix:
@@ -62,7 +61,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           tagName: v__VERSION__
-          releaseName: 'MashVoice Singularity v__VERSION__ (Rust)'
-          releaseBody: 'Release automatique MashVoice Rust + Tauri v2 avec Auto-Updater signé.'
+          releaseName: 'MashVoice Singularity v__VERSION__ (Rust + Tauri v2)'
+          releaseBody: 'Release automatique MashVoice Rust + Tauri v2 avec installateurs .exe / .msi / .dmg / .AppImage et Auto-Updater signé.'
           releaseDraft: false
           prerelease: false
+          uploadPlainBinary: true
