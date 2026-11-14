@@ -69,6 +69,49 @@ fn vault_set(state: State<'_, Arc<AppState>>, patch: Value) -> Result<Value, Str
     Ok(json!({ "ok": true }))
 }
 
+/// Clears any cached WebView2 "Deny" (`setting == 2`) rule on `media_stream_mic` / `media_stream_camera`
+/// inside `EBWebView/Default/Preferences` so WebView2 immediately re-prompts the user for microphone access,
+/// and optionally opens Windows Microphone Privacy settings (`ms-settings:privacy-microphone`).
+#[tauri::command]
+fn repair_microphone_access(app: tauri::AppHandle, open_os_settings: Option<bool>) -> Value {
+    let mut cleared_webview = false;
+    if let Ok(local_dir) = app.path().app_local_data_dir() {
+        let prefs_path = local_dir
+            .join("EBWebView")
+            .join("Default")
+            .join("Preferences");
+        if let Ok(raw) = fs::read_to_string(&prefs_path) {
+            if let Ok(mut doc) = serde_json::from_str::<Value>(&raw) {
+                if let Some(exceptions) = doc
+                    .pointer_mut("/profile/content_settings/exceptions")
+                    .and_then(|v| v.as_object_mut())
+                {
+                    exceptions.remove("media_stream_mic");
+                    exceptions.remove("media_stream_camera");
+                    if let Ok(serialized) = serde_json::to_string(&doc) {
+                        let _ = fs::write(&prefs_path, serialized);
+                        cleared_webview = true;
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    if open_os_settings == Some(true) {
+        let _ = std::process::Command::new("explorer.exe")
+            .arg("ms-settings:privacy-microphone")
+            .spawn();
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = open_os_settings;
+
+    json!({
+        "ok": true,
+        "clearedWebviewCache": cleared_webview,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     std::panic::set_hook(Box::new(|info| {
@@ -150,7 +193,8 @@ pub fn run() {
             get_hardware_info,
             save_hardware_config,
             vault_get,
-            vault_set
+            vault_set,
+            repair_microphone_access
         ])
         .run(tauri::generate_context!())
         .expect("error while running MashVoice Tauri Rust application");

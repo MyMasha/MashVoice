@@ -11,18 +11,24 @@ import {
   Play,
   CheckCircle2,
   AlertTriangle,
+  Sparkles,
+  Download,
   Minus,
   Square,
   X,
 } from 'lucide-react';
 import BlackHoleCanvas from './BlackHoleCanvas.jsx';
+import { UpdateTopPill } from './UpdateExperience.jsx';
 
 export default function SecureLauncher({
   bootstrap,
   hwConfig,
   onUpdateHwConfig,
   updaterStatus,
+  installingUpdate,
   onCheckUpdates,
+  onInstallUpdate,
+  onOpenChangelog,
   onAuthenticated,
   onToggleMobileCompanion,
   mobileCompanionOpen,
@@ -37,7 +43,7 @@ export default function SecureLauncher({
   const [errorMsg, setErrorMsg] = useState(lockReason || '');
 
   // QR Code Challenge state
-  const [qrState, setQrState] = useState(null); // { challengeId, qrDataUrl, fingerprint, expiresAt }
+  const [qrState, setQrState] = useState(null);
   const [qrScannedBy, setQrScannedBy] = useState(null);
   const [qrSecondsLeft, setQrSecondsLeft] = useState(0);
 
@@ -48,7 +54,6 @@ export default function SecureLauncher({
     if (lockReason) setErrorMsg(lockReason);
   }, [lockReason]);
 
-  // Load saved token from encrypted vault if available & ensure local Rust engine is active
   useEffect(() => {
     window.mashNative?.setRemoteNode?.('');
     const loadSaved = async () => {
@@ -66,7 +71,6 @@ export default function SecureLauncher({
     loadSaved();
   }, []);
 
-  // Auto-fill local Founder token on host PC when connectionToken is still empty
   useEffect(() => {
     if (!connectionToken && bootstrap?.starterTokens?.[0]?.token) {
       setConnectionToken(bootstrap.starterTokens[0].token);
@@ -81,7 +85,7 @@ export default function SecureLauncher({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           deviceName: window.mashNative?.isElectron
-            ? 'MashVoice Desktop (Electron)'
+            ? 'MashVoice Desktop (Tauri Rust)'
             : `MashVoice PC (${navigator.platform || 'Desktop'})`,
         }),
       });
@@ -101,7 +105,6 @@ export default function SecureLauncher({
     return undefined;
   }, [authMode, navTab]);
 
-  // Watch active QR challenge via WebSocket for real-time mobile scan & instant PC login
   useEffect(() => {
     if (!qrState?.challengeId || authMode !== 'qr') return undefined;
 
@@ -160,7 +163,7 @@ export default function SecureLauncher({
           connectionToken: connectionToken.trim(),
           username: username.trim(),
           deviceType: 'desktop',
-          deviceName: window.mashNative?.isElectron ? 'MashVoice Electron PC' : 'MashVoice PC',
+          deviceName: window.mashNative?.isElectron ? 'MashVoice Tauri PC' : 'MashVoice PC',
         }),
       });
       const data = await res.json();
@@ -197,12 +200,12 @@ export default function SecureLauncher({
       />
       <div className="launcher-vignette" />
 
-      {/* Top Navigation Bar (MASHCLIENT Singularity 4.1 style) */}
+      {/* Top Navigation Bar (MASHCLIENT Singularity 4.4 style) */}
       <header className="launcher-topbar">
         <div className="brand-cluster">
           <div className="brand-mark" />
           <span className="brand-title">MASHVOICE</span>
-          <span className="singularity-badge">SINGULARITY 4.1</span>
+          <span className="singularity-badge">SINGULARITY 4.4</span>
         </div>
 
         <nav className="launcher-pill-nav" aria-label="Navigation Launcher">
@@ -220,7 +223,7 @@ export default function SecureLauncher({
             className={`pill-nav-btn ${navTab === 'optimisations' ? 'active' : ''}`}
             onClick={() => setNavTab('optimisations')}
           >
-            Optimisations <span className="pill-count">18/18</span>
+            Optimisations <span className="pill-count">22/22</span>
           </button>
           <button
             type="button"
@@ -230,7 +233,7 @@ export default function SecureLauncher({
           >
             Auto-Updater{' '}
             <span className="pill-count">
-              v{updaterStatus?.currentVersion || bootstrap?.version || '1.0.0'}
+              v{updaterStatus?.currentVersion || bootstrap?.version || '1.0.6'}
             </span>
           </button>
           <button
@@ -244,6 +247,13 @@ export default function SecureLauncher({
         </nav>
 
         <div className="topbar-right">
+          <UpdateTopPill
+            updaterStatus={updaterStatus}
+            installing={installingUpdate}
+            onInstallUpdate={onInstallUpdate}
+            onOpenChangelog={onOpenChangelog}
+          />
+
           <button
             type="button"
             id="toggle-mobile-companion-btn"
@@ -287,15 +297,32 @@ export default function SecureLauncher({
       <main className="launcher-main">
         <section className="launcher-hero-left">
           <div className="hero-overline">
-            WEBRTC P2P MESH • ZERO-TRUST TOKEN • STREAM 120 FPS
+            ZERO-IP ZYNTRA • MASHKRISP™ IA • STREAM 120 FPS
           </div>
           <h1 className="hero-heading">MASHVOICE</h1>
           <p className="hero-description">
-            Communication P2P chiffrée ultra-fluide entre amis et serveurs communautaires.
-            Accès protégé par <strong>Token de Connexion obligatoire</strong> vérifié en continu,
-            authentification instantanée par <strong>QR Code Mobile</strong> et Trou Noir 3D de
-            Schwarzschild à mise en veille automatique en jeu.
+            Communication vocale P2P chiffrée de bout en bout avec isolation vocale{' '}
+            <strong>MashKrisp™ Anti-Clavier</strong>, ajout d&apos;amis <strong>100% par Pseudo</strong>,
+            authentification <strong>Token &amp; QR Mobile</strong> et Trou Noir 3D de Schwarzschild.
           </p>
+
+          <div className="preset-row">
+            {[
+              { id: 'ultra', label: 'Cinématique' },
+              { id: 'balanced', label: 'Équilibré (Recommandé)' },
+              { id: 'turbo', label: 'Turbo FPS (0% GPU)' },
+            ].map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`preset-pill ${presetQuality === p.id ? 'selected' : ''}`}
+                onClick={() => onUpdateHwConfig({ shaderPreset: p.id })}
+              >
+                <span className="preset-dot" />
+                {p.label}
+              </button>
+            ))}
+          </div>
         </section>
 
         {/* Right Panel switches based on Top Pill Nav */}
@@ -354,7 +381,7 @@ export default function SecureLauncher({
                 <div className="field-group">
                   <label className="field-label" htmlFor="launcher-username">
                     <span>Ton Pseudo</span>
-                    <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>Chiffré E2EE</span>
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>Zero-IP E2EE</span>
                   </label>
                   <input
                     id="launcher-username"
@@ -485,13 +512,13 @@ export default function SecureLauncher({
             <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
               <Cpu size={18} color="#f5c26b" />
               <h2 style={{ fontSize: 16, fontFamily: 'var(--font-display)' }}>
-                Allocation Matérielle GPU / CPU / RAM & Mode Jeu
+                Allocation Matérielle GPU / CPU / RAM &amp; Mode Jeu
               </h2>
             </div>
 
             <div className="hw-card">
               <div className="field-label">
-                <span>Processeur de Rendu & Encodage Stream</span>
+                <span>Processeur de Rendu &amp; Encodage Stream</span>
                 <span style={{ color: 'var(--gold-bright)' }}>{hwConfig.renderBackend}</span>
               </div>
               <div className="hw-options-grid">
@@ -582,21 +609,26 @@ export default function SecureLauncher({
               <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                 <RefreshCw size={18} color="#f5c26b" />
                 <h2 style={{ fontSize: 16, fontFamily: 'var(--font-display)' }}>
-                  Auto-Updater GitHub — MyMasha/MashVoice
+                  Auto-Updater 1-Clic — MyMasha/MashVoice
                 </h2>
               </div>
-              <button
-                type="button"
-                className="btn-chip"
-                disabled={checkingUpdate}
-                onClick={async () => {
-                  setCheckingUpdate(true);
-                  await onCheckUpdates();
-                  setCheckingUpdate(false);
-                }}
-              >
-                {checkingUpdate ? 'Vérification...' : 'Vérifier maintenant'}
-              </button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" className="btn-chip" onClick={onOpenChangelog}>
+                  <Sparkles size={12} /> Changelog
+                </button>
+                <button
+                  type="button"
+                  className="btn-chip"
+                  disabled={checkingUpdate}
+                  onClick={async () => {
+                    setCheckingUpdate(true);
+                    await onCheckUpdates();
+                    setCheckingUpdate(false);
+                  }}
+                >
+                  {checkingUpdate ? 'Vérification...' : 'Vérifier maintenant'}
+                </button>
+              </div>
             </div>
 
             <div className="hw-card">
@@ -604,27 +636,42 @@ export default function SecureLauncher({
                 <CheckCircle2 size={16} color="#48c78e" />
                 <span>
                   {updaterStatus?.lastStatus?.message ||
-                    `Connecté au dépôt MyMasha/MashVoice (v${updaterStatus?.currentVersion || '1.0.0'}).`}
+                    `Connecté au dépôt MyMasha/MashVoice (v${updaterStatus?.currentVersion || '1.0.6'}).`}
                 </span>
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                Dépôt Open-Source public <strong>MyMasha/MashVoice</strong> : aucune clé API GitHub
-                n&apos;est requise. Chaque mise à jour automatique est vérifiée par la clé publique
-                Ed25519 (<code>{updaterStatus?.updaterKeyId || 'F6A9F0FBF91D7ADE'}</code>).
+                Installation atomique directe sans pop-up bleue SmartScreen (aucun attribut navigateur{' '}
+                <code>Zone.Identifier</code>), signature <code>Ed25519</code> vérifiée et ouverture
+                automatique du Changelog au redémarrage.
               </div>
-              <a
-                href={
-                  updaterStatus?.publicReleasesUrl ||
-                  bootstrap?.publicReleasesUrl ||
-                  'https://github.com/MyMasha/MashVoice/releases/latest'
-                }
-                target="_blank"
-                rel="noreferrer"
-                className="btn-gold-cta"
-                style={{ textDecoration: 'none', padding: '9px 16px', fontSize: 12.5 }}
-              >
-                <ExternalLink size={15} /> Voir les Releases Signées sur GitHub (MyMasha/MashVoice)
-              </a>
+
+              {updaterStatus?.lastStatus?.updateAvailable ? (
+                <button
+                  type="button"
+                  className="btn-gold-cta"
+                  disabled={installingUpdate}
+                  onClick={onInstallUpdate}
+                >
+                  <Download size={15} />
+                  {installingUpdate
+                    ? `Installation en cours (${updaterStatus?.downloadPercent || 0}%)...`
+                    : `Installer v${updaterStatus.lastStatus.latestVersion} & Redémarrer`}
+                </button>
+              ) : (
+                <a
+                  href={
+                    updaterStatus?.publicReleasesUrl ||
+                    bootstrap?.publicReleasesUrl ||
+                    'https://github.com/MyMasha/MashVoice/releases/latest'
+                  }
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-gold-cta"
+                  style={{ textDecoration: 'none', padding: '9px 16px', fontSize: 12.5 }}
+                >
+                  <ExternalLink size={15} /> Voir les Releases Signées sur GitHub (MyMasha/MashVoice)
+                </a>
+              )}
             </div>
           </section>
         )}
@@ -638,9 +685,9 @@ export default function SecureLauncher({
               <div>• CPU Détecté : {bootstrap?.hostSpecs?.cpuModel} ({bootstrap?.hostSpecs?.cpuCores} coeurs)</div>
               <div>• RAM Système : {bootstrap?.hostSpecs?.totalMemMb} Mo</div>
               <div>• Budget RAM MashVoice : Max {hwConfig.maxRamMb} Mo</div>
-              <div>• Moteur Vidéo : {hwConfig.videoEncoder} (degradationPreference = maintain-framerate)</div>
+              <div>• Isolation Vocale : MashKrisp™ AudioWorklet (&lt; 3 ms latence)</div>
               <div>• Relais Zero-IP : wss://zyntra.win/api/mashvoice/ws (E2EE ECDH P-256 + AES-256-GCM)</div>
-              <div>• Auto-Update : Open-Source MyMasha/MashVoice (Signature Ed25519 vérifiée)</div>
+              <div>• Auto-Update : Remplacement atomique .exe sans SmartScreen + Changelog auto</div>
             </div>
           </section>
         )}
@@ -652,8 +699,8 @@ export default function SecureLauncher({
           <span className="status-chip highlight">
             <Lock size={12} color="#f5c26b" /> Token Obligatoire
           </span>
-          <span className="status-chip">WebRTC P2P Direct</span>
-          <span className="status-chip">QR Mobile Ready</span>
+          <span className="status-chip">MashKrisp™ IA</span>
+          <span className="status-chip">Zero-IP Zyntra</span>
           <span className="jvm-summary">
             RAM: Max {hwConfig.maxRamMb} Mo • {hwConfig.renderBackend.toUpperCase()} • Pause Shader En Jeu:{' '}
             {hwConfig.pauseShaderInGame ? 'OUI (0% GPU)' : 'NON'}

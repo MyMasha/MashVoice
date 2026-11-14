@@ -37,10 +37,42 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           tagName: v__VERSION__
-          releaseName: 'MashVoice Singularity v__VERSION__ (Windows x64 • Zero-IP Zyntra Relay)'
-          releaseBody: 'Release Open-Source Windows x64 MashVoice Rust + Tauri v2 (.exe setup, .exe portable & .msi) — Relais Zero-IP Zyntra (mv-relay-v1), chiffrement E2EE ECDH P-256 + AES-256-GCM et Auto-Updater signé Ed25519.'
+          releaseName: 'MashVoice Singularity v__VERSION__ (Windows x64 • MashKrisp IA & Zero-IP Zyntra)'
+          releaseBody: |
+            ### ✨ MashVoice Singularity v__VERSION__ (Windows x64 • Rust + Tauri v2)
+            - **🛡️ MashKrisp™ IA (Isolation Vocale Anti-Clavier)** : Filtre DSP `AudioWorklet` temps réel supprimant les clics de clavier mécanique, souffles PC et bruits de bureau.
+            - **🎙️ Réparation & Hot-Plug Micro Instantané** : Redemande d'autorisation micro en 1 clic et remplacement à chaud sur les appels actifs.
+            - **🎵 Musiques d'Appels & Sons UI** : Sonnerie d'appel entrant, musique d'attente d'appel sortant, sons de messages, vocal et stream.
+            - **⚙️ Paramètres Serveur Complets & Menu Clic-Droit** : Menu contextuel complet + administration multi-onglets.
+            - **🚀 Auto-Updater 1-Clic Sans SmartScreen & Changelog** : Pastille dorée `Mise à jour`, remplacement atomique `.exe` sans `Zone.Identifier` et affichage automatique du Changelog au redémarrage.
+
+            #### ⚡ Installation Rapide Sans Pop-Up Bleue SmartScreen (PowerShell)
+            ```powershell
+            irm https://github.com/MyMasha/MashVoice/releases/latest/download/install-mashvoice.ps1 | iex
+            ```
           releaseDraft: false
           prerelease: false
           uploadPlainBinary: true
+
+      - name: Package Portable ZIP & Upload SmartScreen-Free Installer Script
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          $tag = "v$($pkg.version)"
+          $portableExe = "src-tauri/target/release/mashvoice-tauri.exe"
+          $zipPath = "MashVoice_$($pkg.version)_x64_Portable.zip"
+          if (Test-Path $portableExe) {
+            $stageDir = Join-Path $env:RUNNER_TEMP "MashVoice-Portable"
+            New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+            Copy-Item $portableExe (Join-Path $stageDir "MashVoice.exe") -Force
+            Compress-Archive -Path "$stageDir/*" -DestinationPath $zipPath -Force
+            gh release upload $tag $zipPath scripts/install-mashvoice.ps1 --clobber
+          } else {
+            gh release upload $tag scripts/install-mashvoice.ps1 --clobber
+          }

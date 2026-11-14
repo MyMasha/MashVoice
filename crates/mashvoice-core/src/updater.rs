@@ -4,7 +4,10 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
+    process::Command,
+    sync::atomic::{AtomicU8, Ordering},
     time::Duration,
 };
 
@@ -19,6 +22,15 @@ pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const PUBLIC_RELEASES_URL: &str = "https://github.com/MyMasha/MashVoice/releases/latest";
 pub const ED25519_UPDATER_KEY_ID: &str = "F6A9F0FBF91D7ADE";
 
+pub const BUNDLED_CHANGELOG_NOTES: &str = "\
+### ✨ Nouveautés MashVoice Singularity v1.0.6\n\
+- **🛡️ MashKrisp™ IA (Isolation Vocale Anti-Clavier)** : Filtre DSP temps réel `AudioWorklet` supprimant les clics de clavier mécanique, souffles PC et bruits ambiants pour ne garder que votre voix.\n\
+- **🎙️ Réparation & Hot-Plug Micro Instantané** : Si le micro est bloqué ou débranché, MashVoice le redemande en 1 clic et le rattache à chaud sans quitter l'appel.\n\
+- **🎵 Musiques d'Appels & Sons Discord** : Sonnerie musicale polyphonique d'appel entrant, musique d'attente d'appel sortant, sons de messages, vocal, sourdine et stream.\n\
+- **⚙️ Paramètres Serveur Complets & Menu Clic-Droit** : Menu contextuel complet (Muet, Notifications, Profil par serveur, Emojis/Stickers, Icône/Bannière, Déplacer, Quitter) et panneau d'administration multi-onglets.\n\
+- **🚀 Auto-Updater 1-Clic Sans Pop-Up SmartScreen & Changelog** : Pastille dorée `Mise à jour`, installation atomique `.exe` sans `Zone.Identifier` et affichage automatique du Changelog au redémarrage.\n\
+- **🌌 Refonte Visuelle Singularity Glass** : Interface affinée inspirée de MashClient 4.4.";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseAssetInfo {
@@ -28,6 +40,15 @@ pub struct ReleaseAssetInfo {
     pub download_count: u64,
     pub api_url: String,
     pub browser_download_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangelogEntry {
+    pub version: String,
+    pub title: String,
+    pub notes: String,
+    pub published_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +80,10 @@ struct StoredUpdaterConfig {
     pub last_checked_at: Option<String>,
     #[serde(default)]
     pub last_status: Option<UpdateCheckStatus>,
+    #[serde(default)]
+    pub last_seen_version: Option<String>,
+    #[serde(default)]
+    pub pending_changelog: Option<ChangelogEntry>,
 }
 
 fn default_channel() -> String {
@@ -77,6 +102,8 @@ impl Default for StoredUpdaterConfig {
             auto_download: true,
             last_checked_at: None,
             last_status: None,
+            last_seen_version: Some(CURRENT_VERSION.to_string()),
+            pending_changelog: None,
         }
     }
 }
@@ -93,27 +120,106 @@ pub struct SanitizedUpdaterConfig {
     pub open_source_signed: bool,
     pub updater_key_id: String,
     pub public_releases_url: String,
+    pub install_state: String,
+    pub download_percent: u8,
+    pub pending_changelog: Option<ChangelogEntry>,
+    pub current_changelog: ChangelogEntry,
     pub last_checked_at: Option<String>,
     pub last_status: Option<UpdateCheckStatus>,
+}
+
+fn with_appended_ext(base: &Path, suffix: &str) -> PathBuf {
+    let mut os = base.as_os_str().to_os_string();
+    os.push(".");
+    os.push(suffix);
+    PathBuf::from(os)
+}
+
+/// Silently removes any leftover `.exe.old` binary created by a previous atomic hot-swap update.
+pub fn cleanup_old_binary() {
+    if let Ok(current_exe) = std::env::current_exe() {
+        let _ = fs::remove_file(with_appended_ext(&current_exe, "old"));
+        let _ = fs::remove_file(current_exe.with_extension("exe.old"));
+    }
 }
 
 pub struct UpdaterService {
     cfg_path: PathBuf,
     inner: Mutex<StoredUpdaterConfig>,
+    install_state: Mutex<String>,
+    download_percent: AtomicU8,
     http: reqwest::Client,
+    dl_http: reqwest::Client,
 }
 
 impl UpdaterService {
     pub fn new(data_dir: &Path) -> Self {
+        cleanup_old_binary();
         let _ = fs::create_dir_all(data_dir);
         let cfg_path = data_dir.join("updater-config.json");
-        let loaded = fs::read_to_string(&cfg_path)
+        let existed_on_disk = cfg_path.is_file();
+
+        let mut loaded = fs::read_to_string(&cfg_path)
             .ok()
             .and_then(|s| serde_json::from_str::<StoredUpdaterConfig>(&s).ok())
             .unwrap_or_default();
 
+        let launched_after_update = std::env::args().any(|a| a == "--after-update");
+        let upgraded_from_older = existed_on_disk
+            && loaded
+                .last_seen_version
+                .as_deref()
+                .map(|prev| {
+                    let p = Version::parse(prev.trim_start_matches('v'))
+                        .unwrap_or_else(|_| Version::new(0, 0, 0));
+                    let c = Version::parse(CURRENT_VERSION)
+                        .unwrap_or_else(|_| Version::new(1, 0, 0));
+                    c > p
+                })
+                .unwrap_or(true);
+
+        if (launched_after_update || upgraded_from_older) && loaded.pending_changelog.is_none() {
+            let notes = loaded
+                .last_status
+                .as_ref()
+                .and_then(|st| st.release_notes.clone())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| BUNDLED_CHANGELOG_NOTES.to_string());
+
+            loaded.pending_changelog = Some(ChangelogEntry {
+                version: CURRENT_VERSION.to_string(),
+                title: format!("MashVoice Singularity v{} — Notes de mise à jour", CURRENT_VERSION),
+                notes,
+                published_at: Utc::now().to_rfc3339(),
+            });
+        }
+        loaded.last_seen_version = Some(CURRENT_VERSION.to_string());
+
+        let initial_state = if loaded
+            .last_status
+            .as_ref()
+            .map(|s| {
+                let lat = Version::parse(s.latest_version.trim_start_matches('v'))
+                    .unwrap_or_else(|_| Version::new(0, 0, 0));
+                let cur =
+                    Version::parse(CURRENT_VERSION).unwrap_or_else(|_| Version::new(1, 0, 0));
+                lat > cur
+            })
+            .unwrap_or(false)
+        {
+            "available".to_string()
+        } else {
+            "idle".to_string()
+        };
+
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(8))
+            .timeout(Duration::from_secs(10))
+            .user_agent(format!("MashVoice-OpenSource-AutoUpdater/{}", CURRENT_VERSION))
+            .build()
+            .unwrap_or_default();
+
+        let dl_http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(300))
             .user_agent(format!("MashVoice-OpenSource-AutoUpdater/{}", CURRENT_VERSION))
             .build()
             .unwrap_or_default();
@@ -121,9 +227,11 @@ impl UpdaterService {
         let svc = Self {
             cfg_path,
             inner: Mutex::new(loaded),
+            install_state: Mutex::new(initial_state),
+            download_percent: AtomicU8::new(0),
             http,
+            dl_http,
         };
-        // Re-save sanitized structure so any legacy `readOnlyToken` on disk is scrubbed automatically
         {
             let guard = svc.inner.lock();
             svc.save_locked(&guard);
@@ -137,8 +245,48 @@ impl UpdaterService {
         }
     }
 
-    pub fn get_sanitized(&self) -> SanitizedUpdaterConfig {
+    pub fn current_bundled_changelog(&self) -> ChangelogEntry {
         let cfg = self.inner.lock();
+        let notes = cfg
+            .pending_changelog
+            .as_ref()
+            .map(|c| c.notes.clone())
+            .or_else(|| {
+                cfg.last_status
+                    .as_ref()
+                    .and_then(|s| {
+                        if s.latest_version == CURRENT_VERSION {
+                            s.release_notes.clone()
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| BUNDLED_CHANGELOG_NOTES.to_string());
+
+        ChangelogEntry {
+            version: CURRENT_VERSION.to_string(),
+            title: format!("MashVoice Singularity v{} — Notes de version", CURRENT_VERSION),
+            notes,
+            published_at: Utc::now().to_rfc3339(),
+        }
+    }
+
+    pub fn ack_changelog(&self) -> SanitizedUpdaterConfig {
+        {
+            let mut cfg = self.inner.lock();
+            cfg.pending_changelog = None;
+            cfg.last_seen_version = Some(CURRENT_VERSION.to_string());
+            self.save_locked(&cfg);
+        }
+        self.get_sanitized()
+    }
+
+    pub fn get_sanitized(&self) -> SanitizedUpdaterConfig {
+        let current_changelog = self.current_bundled_changelog();
+        let cfg = self.inner.lock();
+        let state = self.install_state.lock().clone();
         SanitizedUpdaterConfig {
             owner: GITHUB_ORG.into(),
             repo: GITHUB_REPO.into(),
@@ -149,6 +297,10 @@ impl UpdaterService {
             open_source_signed: true,
             updater_key_id: ED25519_UPDATER_KEY_ID.into(),
             public_releases_url: PUBLIC_RELEASES_URL.into(),
+            install_state: state,
+            download_percent: self.download_percent.load(Ordering::Relaxed),
+            pending_changelog: cfg.pending_changelog.clone(),
+            current_changelog,
             last_checked_at: cfg.last_checked_at.clone(),
             last_status: cfg.last_status.clone(),
         }
@@ -189,7 +341,6 @@ impl UpdaterService {
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28");
 
-        // Optional local environment variable only (never embedded, never required for public Open Source)
         if let Ok(local_tok) = std::env::var("MASHVOICE_GITHUB_API_TOKEN") {
             let trimmed = local_tok.trim();
             if !trimmed.is_empty() {
@@ -298,7 +449,7 @@ impl UpdaterService {
             repository: repo_full,
             message: if update_available {
                 format!(
-                    "Nouvelle release signée MashVoice v{} disponible sur MyMasha/MashVoice !",
+                    "Nouvelle version MashVoice v{} prête à installer en 1 clic !",
                     latest_tag
                 )
             } else {
@@ -312,8 +463,210 @@ impl UpdaterService {
             public_releases_url: PUBLIC_RELEASES_URL.into(),
             checked_at: checked_at.clone(),
         };
+
+        {
+            let mut st = self.install_state.lock();
+            if *st != "downloading" && *st != "ready_restart" {
+                *st = if update_available {
+                    "available".into()
+                } else {
+                    "idle".into()
+                };
+            }
+        }
+
         self.record_status(checked_at, status.clone());
         status
+    }
+
+    /// Downloads the portable Windows `.exe` asset directly via Rust (`reqwest` — zero browser
+    /// `Zone.Identifier` Mark-of-the-Web so SmartScreen never triggers!), verifies its `MZ` PE
+    /// header, atomically swaps `current_exe -> .exe.old` and `.exe.new -> current_exe`, and
+    /// persists `pending_changelog` so the Changelog modal opens right after restart.
+    pub async fn install_update(&self) -> Result<SanitizedUpdaterConfig, String> {
+        let mut status_opt = self.inner.lock().last_status.clone();
+        if status_opt.as_ref().map(|s| !s.update_available).unwrap_or(true) {
+            status_opt = Some(self.check_github_updates().await);
+        }
+        let status = status_opt.ok_or_else(|| "Aucune information de mise à jour disponible.".to_string())?;
+        if !status.update_available {
+            return Err(format!("MashVoice v{} est déjà à jour.", CURRENT_VERSION));
+        }
+
+        // Prefer portable `mashvoice-tauri_windows_x64.exe` for zero-UI atomic hot-swap (like MashClient),
+        // falling back to `setup.exe` if needed.
+        let target_asset = status
+            .assets
+            .iter()
+            .find(|a| {
+                let n = a.name.to_ascii_lowercase();
+                n.ends_with(".exe") && !n.contains("setup") && !n.ends_with(".sig")
+            })
+            .or_else(|| {
+                status
+                    .assets
+                    .iter()
+                    .find(|a| a.name.to_ascii_lowercase().ends_with("-setup.exe"))
+            })
+            .cloned()
+            .ok_or_else(|| "Aucun exécutable Windows (.exe) trouvé dans la Release GitHub.".to_string())?;
+
+        *self.install_state.lock() = "downloading".into();
+        self.download_percent.store(2, Ordering::Relaxed);
+
+        let dl_res = async {
+            let mut resp = self
+                .dl_http
+                .get(&target_asset.browser_download_url)
+                .send()
+                .await
+                .map_err(|e| format!("Échec du téléchargement GitHub Releases: {e}"))?;
+
+            if !resp.status().is_success() {
+                return Err(format!(
+                    "Serveur GitHub Releases a répondu HTTP {}",
+                    resp.status().as_u16()
+                ));
+            }
+
+            let total_size = resp
+                .content_length()
+                .filter(|&n| n > 0)
+                .unwrap_or(target_asset.size.max(1));
+
+            let current_exe = std::env::current_exe()
+                .map_err(|e| format!("Chemin de l'exécutable courant inaccessible: {e}"))?;
+
+            // Only hot-swap on Windows `.exe`; on non-Windows dev preview, write to data_dir staging
+            let is_windows_exe = cfg!(windows)
+                || current_exe
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    .map(|x| x.eq_ignore_ascii_case("exe"))
+                    .unwrap_or(false);
+
+            let new_exe = if is_windows_exe {
+                with_appended_ext(&current_exe, "new")
+            } else {
+                self.cfg_path.with_file_name("mashvoice-staged-update.bin")
+            };
+            let _ = fs::remove_file(&new_exe);
+
+            let mut file = fs::File::create(&new_exe)
+                .map_err(|e| format!("Impossible de préparer le fichier de mise à jour: {e}"))?;
+
+            let mut received: u64 = 0;
+            let mut header_probe = Vec::with_capacity(4);
+
+            while let Some(chunk) = resp
+                .chunk()
+                .await
+                .map_err(|e| format!("Interruption du flux de téléchargement: {e}"))?
+            {
+                if header_probe.len() < 2 {
+                    let take = (2 - header_probe.len()).min(chunk.len());
+                    header_probe.extend_from_slice(&chunk[..take]);
+                }
+                file.write_all(&chunk)
+                    .map_err(|e| format!("Erreur d'écriture disque: {e}"))?;
+                received += chunk.len() as u64;
+                let pct = ((received.saturating_mul(96)) / total_size.max(1)).clamp(2, 97) as u8;
+                self.download_percent.store(pct, Ordering::Relaxed);
+            }
+            file.flush().ok();
+            drop(file);
+
+            if header_probe.len() < 2 || &header_probe[..2] != b"MZ" || received < 256 * 1024 {
+                let _ = fs::remove_file(&new_exe);
+                return Err("Le binaire téléchargé est incomplet ou invalide (en-tête PE manquant).".into());
+            }
+
+            // Explicitly strip NTFS Zone.Identifier Mark-of-the-Web if present so SmartScreen never pops up
+            let ads_path = format!("{}:Zone.Identifier", new_exe.display());
+            let _ = fs::remove_file(&ads_path);
+
+            if is_windows_exe {
+                let is_setup_installer = target_asset.name.to_ascii_lowercase().contains("setup");
+                if is_setup_installer {
+                    // Launch silent current-user NSIS update without SmartScreen
+                    Command::new(&new_exe)
+                        .arg("/S")
+                        .spawn()
+                        .map_err(|e| format!("Impossible de lancer l'installateur silencieux: {e}"))?;
+                } else {
+                    let old_exe = with_appended_ext(&current_exe, "old");
+                    let _ = fs::remove_file(&old_exe);
+                    fs::rename(&current_exe, &old_exe).map_err(|e| {
+                        let _ = fs::remove_file(&new_exe);
+                        format!("Impossible de renommer l'exécutable actif: {e}")
+                    })?;
+
+                    if let Err(e) = fs::rename(&new_exe, &current_exe) {
+                        let _ = fs::rename(&old_exe, &current_exe);
+                        let _ = fs::remove_file(&new_exe);
+                        return Err(format!("Échec du remplacement atomique de l'exécutable: {e}"));
+                    }
+                    let cur_ads = format!("{}:Zone.Identifier", current_exe.display());
+                    let _ = fs::remove_file(&cur_ads);
+                }
+            }
+
+            Ok(())
+        }
+        .await;
+
+        if let Err(err) = dl_res {
+            *self.install_state.lock() = "available".into();
+            self.download_percent.store(0, Ordering::Relaxed);
+            return Err(err);
+        }
+
+        let notes = status
+            .release_notes
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| BUNDLED_CHANGELOG_NOTES.to_string());
+
+        {
+            let mut cfg = self.inner.lock();
+            cfg.pending_changelog = Some(ChangelogEntry {
+                version: status.latest_version.clone(),
+                title: format!(
+                    "MashVoice Singularity v{} — Nouveautés installées",
+                    status.latest_version
+                ),
+                notes,
+                published_at: Utc::now().to_rfc3339(),
+            });
+            cfg.last_seen_version = Some(status.latest_version.clone());
+            self.save_locked(&cfg);
+        }
+
+        self.download_percent.store(100, Ordering::Relaxed);
+        *self.install_state.lock() = "ready_restart".into();
+        Ok(self.get_sanitized())
+    }
+
+    pub fn restart_application(&self) -> Result<(), String> {
+        let current_exe =
+            std::env::current_exe().map_err(|e| format!("Exécutable introuvable: {e}"))?;
+        if cfg!(windows)
+            || current_exe
+                .extension()
+                .and_then(|x| x.to_str())
+                .map(|x| x.eq_ignore_ascii_case("exe"))
+                .unwrap_or(false)
+        {
+            Command::new(&current_exe)
+                .arg("--after-update")
+                .spawn()
+                .map_err(|e| format!("Impossible de relancer MashVoice: {e}"))?;
+            std::thread::spawn(|| {
+                std::thread::sleep(Duration::from_millis(350));
+                std::process::exit(0);
+            });
+        }
+        Ok(())
     }
 
     fn record_status(&self, checked_at: String, status: UpdateCheckStatus) {

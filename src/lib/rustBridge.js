@@ -96,6 +96,8 @@ export function installRustBridge() {
       saveHardwareConfig: (patch) => invoke('save_hardware_config', { patch }),
       getVault: () => invoke('vault_get'),
       setVault: (patch) => invoke('vault_set', { patch }),
+      repairMicrophoneAccess: (openOsSettings = false) =>
+        invoke('repair_microphone_access', { openOsSettings }),
       onHardwareTelemetry: (cb) => {
         let unlisten = null;
         listen('hardware:telemetry', (ev) => cb(ev.payload))
@@ -110,6 +112,7 @@ export function installRustBridge() {
     window.mashNative = {
       isTauri: false,
       isElectron: false,
+      repairMicrophoneAccess: async () => ({ ok: true, clearedWebviewDenials: 0 }),
       saveHardwareConfig: (patch) =>
         fetch('/api/hardware/config', {
           method: 'POST',

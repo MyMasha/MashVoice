@@ -15,7 +15,7 @@ use mashvoice_core::{
     security::{
         parse_qr_payload, LoginRateLimiter, QrChallengeManager, SecurityEngine, SessionPayload,
     },
-    store::{ChatMessage, CommunityServer, MashStore, UserProfile},
+    store::{ChatMessage, CommunityServer, MashStore, ServerUpdatePatch, UserProfile},
     updater::{UpdaterService, CURRENT_VERSION, GITHUB_ORG, GITHUB_REPO, PUBLIC_RELEASES_URL},
 };
 use parking_lot::RwLock;
@@ -234,6 +234,27 @@ impl AppState {
                 }
             }
         });
+
+        let upd_bg = Arc::clone(self);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1600)).await;
+            let mut interval = tokio::time::interval(Duration::from_secs(900));
+            loop {
+                interval.tick().await;
+                if upd_bg.updater.get_sanitized().auto_check {
+                    let st = upd_bg.updater.check_github_updates().await;
+                    if st.update_available {
+                        upd_bg.broadcast_all(
+                            &json!({
+                                "type": "updater:status",
+                                "config": upd_bg.updater.get_sanitized(),
+                            }),
+                            None,
+                        );
+                    }
+                }
+            }
+        });
     }
 
     fn broadcast_all(&self, payload: &Value, exclude_peer: Option<&str>) {
@@ -367,6 +388,9 @@ pub fn build_router(data_dir: &Path, dist_dir: Option<PathBuf>) -> (Router, Arc<
         .route("/updater/status", get(api_updater_status))
         .route("/updater/config", post(api_updater_config))
         .route("/updater/check", post(api_updater_check))
+        .route("/updater/install", post(api_updater_install))
+        .route("/updater/restart", post(api_updater_restart))
+        .route("/updater/ack-changelog", post(api_updater_ack_changelog))
         .route("/hardware/telemetry", get(api_hardware_telemetry))
         .route("/hardware/config", post(api_hardware_config))
         .route("/state", get(api_workspace_state))
@@ -382,8 +406,14 @@ pub fn build_router(data_dir: &Path, dist_dir: Option<PathBuf>) -> (Router, Arc<
         .route("/messages/:channel_id/:message_id/react", post(api_messages_react))
         .route("/servers", post(api_servers_create))
         .route("/servers/join", post(api_servers_join))
+        .route("/servers/:server_id", patch(api_servers_update).delete(api_servers_delete))
+        .route("/servers/:server_id/leave", post(api_servers_leave))
         .route("/servers/:server_id/channels", post(api_channels_create))
+        .route("/servers/:server_id/channels/:channel_id", delete(api_channels_delete))
         .route("/servers/:server_id/roles", post(api_roles_create))
+        .route("/servers/:server_id/roles/:role_id", delete(api_roles_delete))
+        .route("/servers/:server_id/assets", post(api_server_assets_add))
+        .route("/servers/:server_id/assets/:kind/:asset_id", delete(api_server_assets_remove))
         .route(
             "/servers/:server_id/members/:target_user_id/roles",
             post(api_member_role_toggle),
@@ -901,6 +931,60 @@ async fn api_updater_check(State(st): State<Arc<AppState>>) -> Json<Value> {
         "ok": true,
         "config": st.updater.get_sanitized(),
         "status": status,
+    }))
+}
+
+async fn api_updater_install(
+    State(st): State<Arc<AppState>>,
+    body: Option<Json<Value>>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let auto_restart = body
+        .as_ref()
+        .and_then(|b| b["autoRestart"].as_bool())
+        .unwrap_or(true);
+
+    match st.updater.install_update().await {
+        Ok(cfg) => {
+            st.broadcast_all(&json!({ "type": "updater:status", "config": cfg }), None);
+            if auto_restart {
+                let st_clone = Arc::clone(&st);
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(550)).await;
+                    let _ = st_clone.updater.restart_application();
+                });
+            }
+            Ok(Json(json!({
+                "ok": true,
+                "config": cfg,
+                "restarting": auto_restart,
+            }))
+            .into_response())
+        }
+        Err(err) => Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": err,
+                "config": st.updater.get_sanitized(),
+            })),
+        )
+            .into_response()),
+    }
+}
+
+async fn api_updater_restart(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let res = st.updater.restart_application();
+    Json(json!({
+        "ok": res.is_ok(),
+        "error": res.err(),
+    }))
+}
+
+async fn api_updater_ack_changelog(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let cfg = st.updater.ack_changelog();
+    Json(json!({
+        "ok": true,
+        "config": cfg,
     }))
 }
 
@@ -1624,6 +1708,136 @@ async fn api_member_role_toggle(
         .toggle_member_role(&server_id, &target_user_id, role_id)
     else {
         return Ok((StatusCode::NOT_FOUND, Json(json!({ "error": "Membre introuvable." }))).into_response());
+    };
+    st.broadcast_all(&json!({ "type": "server:updated", "server": srv }), None);
+    Ok(Json(json!({ "ok": true, "server": srv })).into_response())
+}
+
+async fn api_servers_update(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(server_id): AxumPath<String>,
+    Json(patch): Json<ServerUpdatePatch>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let _ = st.extract_auth(&headers)?;
+    let Some(srv) = st.store.update_server_settings(&server_id, patch) else {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "Serveur introuvable." })),
+        )
+            .into_response());
+    };
+    st.broadcast_all(&json!({ "type": "server:updated", "server": srv }), None);
+    Ok(Json(json!({ "ok": true, "server": srv })).into_response())
+}
+
+async fn api_servers_delete(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(server_id): AxumPath<String>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let (_sess, me) = st.extract_auth(&headers)?;
+    match st.store.leave_or_delete_server(&server_id, &me.id, true) {
+        Ok(_) => {
+            st.broadcast_all(
+                &json!({ "type": "server:deleted", "serverId": server_id }),
+                None,
+            );
+            Ok(Json(json!({ "ok": true, "deletedServerId": server_id })).into_response())
+        }
+        Err(err) => Ok((StatusCode::FORBIDDEN, Json(json!({ "error": err }))).into_response()),
+    }
+}
+
+async fn api_servers_leave(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(server_id): AxumPath<String>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let (_sess, me) = st.extract_auth(&headers)?;
+    match st.store.leave_or_delete_server(&server_id, &me.id, false) {
+        Ok(Some(srv)) => {
+            st.broadcast_all(&json!({ "type": "server:updated", "server": srv }), None);
+            Ok(Json(json!({ "ok": true, "leftServerId": server_id, "server": srv })).into_response())
+        }
+        Ok(None) => {
+            st.broadcast_all(
+                &json!({ "type": "server:deleted", "serverId": server_id }),
+                None,
+            );
+            Ok(Json(json!({ "ok": true, "leftServerId": server_id })).into_response())
+        }
+        Err(err) => Ok((StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response()),
+    }
+}
+
+async fn api_channels_delete(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath((server_id, channel_id)): AxumPath<(String, String)>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let _ = st.extract_auth(&headers)?;
+    let Some(srv) = st.store.delete_channel(&server_id, &channel_id) else {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "Serveur introuvable." })),
+        )
+            .into_response());
+    };
+    st.broadcast_all(&json!({ "type": "server:updated", "server": srv }), None);
+    Ok(Json(json!({ "ok": true, "server": srv })).into_response())
+}
+
+async fn api_roles_delete(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath((server_id, role_id)): AxumPath<(String, String)>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let _ = st.extract_auth(&headers)?;
+    let Some(srv) = st.store.delete_role(&server_id, &role_id) else {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "Serveur introuvable." })),
+        )
+            .into_response());
+    };
+    st.broadcast_all(&json!({ "type": "server:updated", "server": srv }), None);
+    Ok(Json(json!({ "ok": true, "server": srv })).into_response())
+}
+
+async fn api_server_assets_add(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(server_id): AxumPath<String>,
+    Json(body): Json<Value>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let _ = st.extract_auth(&headers)?;
+    let kind = body["kind"].as_str().unwrap_or("emoji");
+    let name = body["name"].as_str().unwrap_or("emoji");
+    let value = body["value"].as_str().unwrap_or("🔥");
+    let Some(srv) = st.store.add_server_asset(&server_id, kind, name, value) else {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "Serveur introuvable." })),
+        )
+            .into_response());
+    };
+    st.broadcast_all(&json!({ "type": "server:updated", "server": srv }), None);
+    Ok(Json(json!({ "ok": true, "server": srv })).into_response())
+}
+
+async fn api_server_assets_remove(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath((server_id, kind, asset_id)): AxumPath<(String, String, String)>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let _ = st.extract_auth(&headers)?;
+    let Some(srv) = st.store.remove_server_asset(&server_id, &kind, &asset_id) else {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "Serveur introuvable." })),
+        )
+            .into_response());
     };
     st.broadcast_all(&json!({ "type": "server:updated", "server": srv }), None);
     Ok(Json(json!({ "ok": true, "server": srv })).into_response())

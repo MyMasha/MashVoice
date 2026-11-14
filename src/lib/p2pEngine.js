@@ -1,10 +1,13 @@
 /**
  * MashVoice Singularity P2P WebRTC Mesh Engine
- * - Direct Peer-to-Peer Audio (Opus FEC), Camera & High-FPS Game Screen Streaming
+ * - Direct Peer-to-Peer Audio (Opus FEC + MashKrisp™ Voice Isolation), Camera & High-FPS Game Screen Streaming
+ * - Instant Blocked/Unplugged Microphone Re-Request & Hot-Plug (`replaceTrack`) without leaving calls
  * - Hardware encoder preference (H264 NVENC / AV1 / VP9)
  * - Zero-overhead gaming degradationPreference = 'maintain-framerate'
  * - Encrypted-envelope RTCDataChannel for P2P messages & file chunks
  */
+
+import { KrispVoiceProcessor, loadSavedKrispMode } from './krispEngine.js';
 
 const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -43,17 +46,42 @@ function preferCodecInSdp(sdp, preferredCodec = 'H264') {
 }
 
 export class P2PMeshEngine {
-  constructor({ sendSignal, onRemoteStreamsChange, onP2PData, onStatsUpdate, onSpeakingChange }) {
+  constructor({
+    sendSignal,
+    onRemoteStreamsChange,
+    onP2PData,
+    onStatsUpdate,
+    onSpeakingChange,
+    onMicStateChange,
+    onKrispMeter,
+  }) {
     this.sendSignal = sendSignal;
     this.onRemoteStreamsChange = onRemoteStreamsChange;
     this.onP2PData = onP2PData;
     this.onStatsUpdate = onStatsUpdate;
     this.onSpeakingChange = onSpeakingChange;
+    this.onMicStateChange = onMicStateChange;
+    this.onKrispMeter = onKrispMeter;
 
     this.roomId = null;
     this.selfPeerKey = null;
-    this.peers = new Map(); // peerKey -> { pc, dc, stream, screenStream, user }
+    this.peers = new Map(); // peerKey -> { pc, dc, remoteStream, peerMeta, pendingCandidates }
+
+    // IMPORTANT: Keep real hardware mic stream strictly separate from fallback silent stream
+    // so a denied/unplugged mic NEVER locks the user out of re-requesting microphone access!
+    this.rawMicStream = null;
     this.localAudioStream = null;
+    this.silentFallbackCtx = null;
+    this.silentFallbackStream = null;
+    this.hasRealMic = false;
+    this.micStatus = 'idle'; // 'idle' | 'active' | 'blocked' | 'no-device'
+    this.micError = '';
+    this.micDeviceLabel = '';
+    this.preferredAudioInputId = '';
+
+    this.krispMode = loadSavedKrispMode(); // 'ultra' | 'standard' | 'off'
+    this.krispProcessor = null;
+
     this.localCameraStream = null;
     this.localScreenStream = null;
     this.syntheticCleanup = null;
@@ -61,6 +89,7 @@ export class P2PMeshEngine {
     this.muted = false;
     this.deafened = false;
     this.voiceAnalyserTimer = null;
+    this.analyserCtx = null;
     this.statsTimer = null;
 
     this.streamSettings = {
@@ -71,12 +100,64 @@ export class P2PMeshEngine {
       maintainFramerate: true,
       echoCancellation: true,
       noiseSuppression: true,
+      krispMode: this.krispMode,
+      audioInputId: '',
     };
+
+    // Automatically recover microphone as soon as user grants browser permission or plugs in a headset
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
+      this._onDeviceChange = () => {
+        if (this.roomId && !this.hasRealMic) {
+          this.retryMicrophone().catch(() => {});
+        }
+      };
+      navigator.mediaDevices.addEventListener('devicechange', this._onDeviceChange);
+    }
+    if (typeof navigator !== 'undefined' && navigator.permissions?.query) {
+      navigator.permissions
+        .query({ name: 'microphone' })
+        .then((permStatus) => {
+          permStatus.onchange = () => {
+            if (permStatus.state === 'granted' && this.roomId && !this.hasRealMic) {
+              this.retryMicrophone().catch(() => {});
+            }
+          };
+        })
+        .catch(() => {});
+    }
+  }
+
+  emitMicState() {
+    this.onMicStateChange?.({
+      status: this.micStatus,
+      hasRealMic: this.hasRealMic,
+      error: this.micError,
+      deviceLabel: this.micDeviceLabel,
+      krispMode: this.krispMode,
+    });
+  }
+
+  setKrispMode(mode) {
+    this.krispMode = mode === 'ultra' || mode === 'standard' || mode === 'off' ? mode : 'ultra';
+    this.streamSettings.krispMode = this.krispMode;
+    if (this.krispProcessor) {
+      this.krispProcessor.setMode(this.krispMode);
+    }
+    this.emitMicState();
   }
 
   updateStreamSettings(patch) {
+    const prevDevice = this.streamSettings.audioInputId;
     this.streamSettings = { ...this.streamSettings, ...patch };
-    // Dynamically apply bitrate & framerate parameters to active senders
+    if (patch.krispMode && patch.krispMode !== this.krispMode) {
+      this.setKrispMode(patch.krispMode);
+    }
+    if (patch.audioInputId !== undefined && patch.audioInputId !== prevDevice) {
+      this.preferredAudioInputId = patch.audioInputId || '';
+      if (this.roomId) {
+        this.retryMicrophone(this.preferredAudioInputId).catch(() => {});
+      }
+    }
     for (const { pc } of this.peers.values()) {
       this.applySenderParameters(pc);
     }
@@ -103,31 +184,186 @@ export class P2PMeshEngine {
     }
   }
 
-  async ensureLocalAudio() {
-    if (this.localAudioStream) return this.localAudioStream;
+  getOrCreateSilentFallback() {
+    if (this.silentFallbackStream) return this.silentFallbackStream;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioCtx();
+    const dest = ctx.createMediaStreamDestination();
+    this.silentFallbackCtx = ctx;
+    this.silentFallbackStream = dest.stream;
+    return dest.stream;
+  }
+
+  stopRawMicOnly() {
+    if (this.krispProcessor) {
+      this.krispProcessor.destroy();
+      this.krispProcessor = null;
+    }
+    if (this.rawMicStream) {
+      this.rawMicStream.getTracks().forEach((t) => t.stop());
+      this.rawMicStream = null;
+    }
+    this.hasRealMic = false;
+  }
+
+  /**
+   * Requests real hardware microphone access (never permanently caching a silent fallback!).
+   * If blocked in Tauri WebView2, clears cached deny rules first so Windows/WebView2 re-prompts!
+   */
+  async ensureLocalAudio({ forcePrompt = false, preferredDeviceId = null } = {}) {
+    if (
+      !forcePrompt &&
+      this.hasRealMic &&
+      this.localAudioStream &&
+      this.rawMicStream?.getAudioTracks().some((t) => t.readyState === 'live')
+    ) {
+      return this.localAudioStream;
+    }
+
+    if (forcePrompt) {
+      // Clear any sticky WebView2 media_stream_mic deny entry before calling getUserMedia
+      try {
+        await window.mashNative?.repairMicrophoneAccess?.(false);
+      } catch {
+        // ignore
+      }
+    }
+
+    const targetDeviceId =
+      preferredDeviceId !== null
+        ? preferredDeviceId
+        : this.preferredAudioInputId || this.streamSettings.audioInputId || '';
+
+    const buildConstraints = (useExactDevice) => ({
+      audio: {
+        ...(useExactDevice && targetDeviceId ? { deviceId: { exact: targetDeviceId } } : {}),
+        echoCancellation: this.streamSettings.echoCancellation !== false,
+        noiseSuppression: this.streamSettings.noiseSuppression !== false,
+        autoGainControl: true,
+        channelCount: 2,
+        sampleRate: 48000,
+      },
+      video: false,
+    });
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: this.streamSettings.echoCancellation,
-          noiseSuppression: this.streamSettings.noiseSuppression,
-          autoGainControl: true,
-          channelCount: 2,
-          sampleRate: 48000,
-        },
-        video: false,
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('API Microphone indisponible sur ce système');
+      }
+
+      let rawStream;
+      try {
+        rawStream = await navigator.mediaDevices.getUserMedia(
+          buildConstraints(Boolean(targetDeviceId))
+        );
+      } catch (firstErr) {
+        // If specific device was unplugged or overconstrained, immediately retry default system mic!
+        if (targetDeviceId || firstErr?.name === 'OverconstrainedError') {
+          rawStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        } else {
+          throw firstErr;
+        }
+      }
+
+      this.stopRawMicOnly();
+      this.rawMicStream = rawStream;
+      const hwTrack = rawStream.getAudioTracks()[0];
+      this.micDeviceLabel = hwTrack?.label || 'Microphone Actif';
+
+      // Watch for physical USB/jack unplug so UI immediately offers 1-click recovery
+      if (hwTrack) {
+        hwTrack.onended = () => {
+          this.hasRealMic = false;
+          this.micStatus = 'no-device';
+          this.micError = 'Microphone débranché — clique pour reconnecter un micro.';
+          this.emitMicState();
+        };
+      }
+
+      // Route through MashKrisp™ Voice Isolation DSP
+      const krisp = new KrispVoiceProcessor({
+        mode: this.krispMode,
+        onMeter: (m) => this.onKrispMeter?.(m),
       });
-      this.localAudioStream = stream;
-      for (const t of stream.getAudioTracks()) {
+      const processedStream = await krisp.attach(rawStream);
+      this.krispProcessor = krisp;
+
+      this.localAudioStream = processedStream;
+      this.hasRealMic = true;
+      this.micStatus = 'active';
+      this.micError = '';
+
+      for (const t of rawStream.getAudioTracks()) {
         t.enabled = !this.muted;
       }
-      this.startSpeakingDetector(stream);
-      return stream;
-    } catch {
-      // Fallback silent audio track if user has no mic connected
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const dest = ctx.createMediaStreamDestination();
-      this.localAudioStream = dest.stream;
-      return dest.stream;
+      for (const t of processedStream.getAudioTracks()) {
+        t.enabled = !this.muted;
+      }
+
+      this.startSpeakingDetector(processedStream);
+      this.emitMicState();
+      return processedStream;
+    } catch (err) {
+      const errName = err?.name || '';
+      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError' || errName === 'SecurityError') {
+        this.micStatus = 'blocked';
+        this.micError =
+          'Accès au micro bloqué — clique sur « Réactiver & Autoriser le micro » pour redemander la permission.';
+      } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+        this.micStatus = 'no-device';
+        this.micError = 'Aucun microphone détecté — branche un micro puis clique sur Réessayer.';
+      } else {
+        this.micStatus = 'blocked';
+        this.micError = err?.message || 'Microphone indisponible — clique pour réessayer.';
+      }
+
+      this.hasRealMic = false;
+      const fallback = this.getOrCreateSilentFallback();
+      this.localAudioStream = fallback;
+      this.emitMicState();
+      return fallback;
+    }
+  }
+
+  /**
+   * Explicit 1-click microphone recovery & hot-swap onto all active WebRTC peers without leaving the call!
+   */
+  async retryMicrophone(preferredDeviceId = null) {
+    const stream = await this.ensureLocalAudio({
+      forcePrompt: true,
+      preferredDeviceId,
+    });
+    if (this.hasRealMic && stream) {
+      await this.syncAudioTrackToAllPeers();
+      if (this.muted) {
+        this.setMuted(false);
+      }
+    }
+    return {
+      ok: this.hasRealMic,
+      status: this.micStatus,
+      error: this.micError,
+      deviceLabel: this.micDeviceLabel,
+    };
+  }
+
+  async syncAudioTrackToAllPeers() {
+    const desiredAudio = this.localAudioStream?.getAudioTracks()[0] || null;
+    if (!desiredAudio) return;
+    for (const [peerKey, { pc }] of this.peers.entries()) {
+      try {
+        const audioSender = pc
+          .getSenders()
+          .find((s) => (s.track && s.track.kind === 'audio') || (!s.track && pc.getTransceivers?.().some((tr) => tr.sender === s && tr.receiver?.track?.kind === 'audio')));
+        if (audioSender) {
+          await audioSender.replaceTrack(desiredAudio);
+        } else {
+          pc.addTrack(desiredAudio, this.localAudioStream);
+          await this.negotiateOffer(peerKey, pc);
+        }
+      } catch {
+        // ignore transient peer state
+      }
     }
   }
 
@@ -137,6 +373,7 @@ export class P2PMeshEngine {
       const audioTrack = stream.getAudioTracks()[0];
       if (!audioTrack) return;
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.analyserCtx = ctx;
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
@@ -145,7 +382,7 @@ export class P2PMeshEngine {
       let lastSpeaking = false;
 
       this.voiceAnalyserTimer = setInterval(() => {
-        if (this.muted) {
+        if (this.muted || !this.hasRealMic) {
           if (lastSpeaking) {
             lastSpeaking = false;
             this.onSpeakingChange?.(false);
@@ -156,12 +393,12 @@ export class P2PMeshEngine {
         let sum = 0;
         for (let i = 0; i < buf.length; i++) sum += buf[i];
         const avg = sum / buf.length;
-        const speaking = avg > 14;
+        const speaking = avg > 12;
         if (speaking !== lastSpeaking) {
           lastSpeaking = speaking;
           this.onSpeakingChange?.(speaking);
         }
-      }, 160);
+      }, 140);
     } catch {
       // ignore
     }
@@ -172,10 +409,20 @@ export class P2PMeshEngine {
       clearInterval(this.voiceAnalyserTimer);
       this.voiceAnalyserTimer = null;
     }
+    if (this.analyserCtx) {
+      this.analyserCtx.close().catch(() => {});
+      this.analyserCtx = null;
+    }
   }
 
   setMuted(muted) {
     this.muted = Boolean(muted);
+    this.krispProcessor?.resume();
+    if (this.rawMicStream) {
+      for (const t of this.rawMicStream.getAudioTracks()) {
+        t.enabled = !this.muted;
+      }
+    }
     if (this.localAudioStream) {
       for (const t of this.localAudioStream.getAudioTracks()) {
         t.enabled = !this.muted;
@@ -264,7 +511,6 @@ export class P2PMeshEngine {
       await this.syncTracksToAllPeers();
       return stream;
     } catch {
-      // Fallback high-FPS simulated stream for cloud/mobile environments without getDisplayMedia
       const sim = this.createSimulatedVideoStream(
         `STREAM JEU • ${this.streamSettings.resolution} ${fps} FPS ZERO-COPY`
       );
@@ -286,7 +532,6 @@ export class P2PMeshEngine {
       ctx.fillStyle = '#050508';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Accretion ring preview
       const cx = canvas.width * 0.5;
       const cy = canvas.height * 0.5;
       const grad = ctx.createRadialGradient(cx, cy, 48, cx, cy, 210);
@@ -339,7 +584,6 @@ export class P2PMeshEngine {
     if (this.localAudioStream) {
       tracks.push(...this.localAudioStream.getAudioTracks());
     }
-    // Prefer screen share video track if active, else camera track (or both if supported)
     if (this.localScreenStream) {
       tracks.push(...this.localScreenStream.getVideoTracks());
       tracks.push(...this.localScreenStream.getAudioTracks());
@@ -488,10 +732,7 @@ export class P2PMeshEngine {
         pc.removeTrack(videoSender);
         await this.negotiateOffer(peerKey, pc);
       } else if (!videoSender && desiredVideo) {
-        pc.addTrack(
-          desiredVideo,
-          this.localScreenStream || this.localCameraStream
-        );
+        pc.addTrack(desiredVideo, this.localScreenStream || this.localCameraStream);
         await this.applySenderParameters(pc);
         await this.negotiateOffer(peerKey, pc);
       }
@@ -560,13 +801,17 @@ export class P2PMeshEngine {
       let rttMs = 8;
       let totalBytes = 0;
       let packetsLost = 0;
-      let activePeers = this.peers.size;
+      const activePeers = this.peers.size;
 
       for (const { pc } of this.peers.values()) {
         try {
           const stats = await pc.getStats();
           stats.forEach((report) => {
-            if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.currentRoundTripTime) {
+            if (
+              report.type === 'candidate-pair' &&
+              report.state === 'succeeded' &&
+              report.currentRoundTripTime
+            ) {
               rttMs = Math.round(report.currentRoundTripTime * 1000);
             }
             if (report.type === 'outbound-rtp') {
@@ -626,9 +871,13 @@ export class P2PMeshEngine {
       }
     }
     this.peers.clear();
-    if (this.localAudioStream) {
-      this.localAudioStream.getTracks().forEach((t) => t.stop());
-      this.localAudioStream = null;
+
+    this.stopRawMicOnly();
+    this.localAudioStream = null;
+    if (this.silentFallbackCtx) {
+      this.silentFallbackCtx.close().catch(() => {});
+      this.silentFallbackCtx = null;
+      this.silentFallbackStream = null;
     }
     if (this.localCameraStream) {
       this.localCameraStream.getTracks().forEach((t) => t.stop());
@@ -639,6 +888,8 @@ export class P2PMeshEngine {
       this.localScreenStream = null;
     }
     this.roomId = null;
+    this.micStatus = 'idle';
+    this.micError = '';
     this.emitRemoteStreams();
   }
 }

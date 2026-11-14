@@ -8,13 +8,19 @@ Application de communication vocale, vidéo et messagerie **P2P chiffrée de bou
 
 ---
 
-## 📥 Téléchargement Windows (`.exe` signé)
+## 📥 Téléchargement Windows (`.exe` signé & Sans SmartScreen)
 
 Téléchargez la dernière version officielle signée cryptographiquement (`Ed25519`) sur GitHub Releases :
 
-👉 **[Télécharger MashVoice pour Windows x64 (`setup.exe` / portable `.exe` / `.msi`)](https://github.com/MyMasha/MashVoice/releases/latest)**
+👉 **[Télécharger MashVoice pour Windows x64 (`setup.exe` / `Portable.zip` / `.msi`)](https://github.com/MyMasha/MashVoice/releases/latest)**
 
-> Les mises à jour suivantes s'installent automatiquement via l'**Auto-Updater Tauri v2** (aucune clé API ni compte GitHub requis ; chaque binaire est vérifié par la clé publique `Ed25519` `F6A9F0FBF91D7ADE`).
+### ⚡ Installation en 1 ligne (Zéro Pop-Up Bleue SmartScreen / Zéro UAC)
+Ouvrez **PowerShell** et collez :
+```powershell
+irm https://github.com/MyMasha/MashVoice/releases/latest/download/install-mashvoice.ps1 | iex
+```
+> Ce script officiel télécharge la dernière Release `MyMasha/MashVoice`, retire automatiquement l'attribut navigateur `Zone.Identifier` (`Unblock-File`) responsable de l'écran bleu Windows SmartScreen, installe MashVoice dans votre session utilisateur (`%LOCALAPPDATA%\MashVoice`) et le lance immédiatement.  
+> Toutes les mises à jour suivantes s'installent **en 1 clic directement dans l'application** (pastille dorée `Mise à jour`) par remplacement atomique `.exe` — **sans jamais redéclencher SmartScreen** — puis affichent automatiquement le **Changelog** au redémarrage !
 
 ---
 
@@ -23,14 +29,16 @@ Téléchargez la dernière version officielle signée cryptographiquement (`Ed25
 1. **Ajout d'Amis & Messagerie 100 % Pseudo (`Zero-IP`)**
    - Connexion automatique à `wss://zyntra.win/api/mashvoice/ws` + repli HTTPS REST (`https://zyntra.win/api/mashvoice/publish`, `/poll`, `/presence/:pseudo`).
    - Les demandes d'amis et messages privés envoyés à un contact hors-ligne sont conservés chiffrés jusqu'à 7 jours et livrés dès sa reconnexion, puis nettoyés par `ack`.
-2. **Vocal Haute Fidélité, Caméra & Partage d'Écran 120 FPS**
-   - Signalisation SDP/ICE chiffrée via `zyntra.win`, puis transport média direct **WebRTC P2P** à latence minimale (`maintain-framerate`, priorité encodeur matériel GPU NVENC / AMF / QSV).
-3. **Serveurs Communautaires & Rôles Granulaires**
-   - Salons textuels, vocaux et streams, invitations par code (`MASH-...`), réactions temps réel et permissions par rôle.
-4. **Contrôleur Matériel Gaming Natif (`sysinfo`)**
-   - Détection automatique des jeux actifs (*MashClient, Minecraft, Valorant, CS2, Fortnite, GTA V, League of Legends...*), budget RAM ajustable (`512–8192 Mo`), sélection GPU dédié / iGPU / CPU et mise en veille automatique du rendu WebGL en pleine partie.
-5. **Authentification Zero-Trust & QR Code Mobile**
-   - Tokens de connexion `MASH-SV4` signés `HMAC-SHA256` en temps constant (`subtle`), coffre-fort local `AES-256-GCM` et connexion instantanée par scan QR depuis l'interface Mobile compagnon.
+2. **🛡️ MashKrisp™ IA (Isolation Vocale Anti-Clavier) & Hot-Plug Micro**
+   - Filtre DSP temps réel `AudioWorklet` supprimant les clics de clavier mécanique, chocs de bureau et souffles de ventilateurs PC tout en préservant le timbre naturel de la voix (`< 3 ms` de latence).
+   - Réparation et redemande d'autorisation microphone en 1 clic avec remplacement à chaud (`replaceTrack`) sans quitter l'appel.
+3. **Vocal Haute Fidélité, Sonneries Musicales & Partage d'Écran 120 FPS**
+   - Musiques d'appels entrants/sortants et sons d'événements style Discord synthétisés en WebAudio polyphonique (volume réglable).
+   - Transport média direct **WebRTC P2P** à latence minimale (`maintain-framerate`, priorité encodeur matériel GPU NVENC / AMF / QSV).
+4. **Serveurs Communautaires, Menu Clic-Droit & Paramètres Serveur Complets**
+   - Menu contextuel complet style Discord (Muet, Notifications, Profil par serveur, Emojis & Stickers, Icône & Bannière, Déplacer, Quitter) et administration multi-onglets.
+5. **Contrôleur Matériel Gaming Natif (`sysinfo`) & Authentification Zero-Trust QR**
+   - Détection automatique des jeux actifs (*MashClient, Minecraft, Valorant, CS2, Fortnite...*), budget RAM ajustable, mise en veille `0% GPU` du shader 3D en jeu, tokens `MASH-SV4` (`HMAC-SHA256`) et connexion instantanée par scan QR Mobile.
 
 ---
 

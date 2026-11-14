@@ -79,14 +79,45 @@ pub struct ServerChannel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ServerCustomAsset {
+    pub id: String,
+    pub name: String,
+    pub value: String, // emoji character or image DataURL/HTTPS URL
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerUpdatePatch {
+    pub name: Option<String>,
+    pub short_name: Option<String>,
+    pub description: Option<String>,
+    pub icon_type: Option<String>,
+    pub icon_url: Option<String>,
+    pub banner_style: Option<String>,
+    pub banner_url: Option<String>,
+    pub regenerate_invite: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CommunityServer {
     pub id: String,
     pub name: String,
     pub short_name: String,
     pub icon_type: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_url: Option<String>,
     pub invite_code: String,
     pub owner_id: String,
     pub banner_style: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner_url: Option<String>,
+    #[serde(default)]
+    pub custom_emojis: Vec<ServerCustomAsset>,
+    #[serde(default)]
+    pub custom_stickers: Vec<ServerCustomAsset>,
     pub roles: Vec<ServerRole>,
     pub members: Vec<ServerMember>,
     pub categories: Vec<ChannelCategory>,
@@ -218,9 +249,24 @@ fn build_initial_state(sec: &SecurityEngine) -> PersistedState {
             name: "MyMasha • Singularity HQ".into(),
             short_name: "MM".into(),
             icon_type: "blackhole".into(),
+            description: "Quartier général officiel MashVoice Singularity P2P • Relais Zero-IP Zyntra".into(),
+            icon_url: None,
             invite_code: "MASH-HQ-2026".into(),
             owner_id: "usr-rawsq".into(),
             banner_style: "schwarzschild".into(),
+            banner_url: None,
+            custom_emojis: vec![
+                ServerCustomAsset { id: "em-bh".into(), name: "singularity".into(), value: "🕳️".into() },
+                ServerCustomAsset { id: "em-fire".into(), name: "mashfire".into(), value: "🔥".into() },
+                ServerCustomAsset { id: "em-bolt".into(), name: "turbo120".into(), value: "⚡".into() },
+                ServerCustomAsset { id: "em-shield".into(), name: "e2ee".into(), value: "🛡️".into() },
+                ServerCustomAsset { id: "em-crown".into(), name: "founder".into(), value: "👑".into() },
+            ],
+            custom_stickers: vec![
+                ServerCustomAsset { id: "st-orbit".into(), name: "Horizon Schwarzschild".into(), value: "🪐 SINGULARITY 4.1".into() },
+                ServerCustomAsset { id: "st-gg".into(), name: "GG EZ 680 FPS".into(), value: "⚡ GG 680 FPS".into() },
+                ServerCustomAsset { id: "st-zyntra".into(), name: "Zero-IP Zyntra".into(), value: "🔐 ZERO-IP E2EE".into() },
+            ],
             roles: vec![
                 ServerRole {
                     id: "role-founder".into(),
@@ -376,9 +422,19 @@ fn build_initial_state(sec: &SecurityEngine) -> PersistedState {
             name: "MashClient Competitive".into(),
             short_name: "MC".into(),
             icon_type: "goldring".into(),
+            description: "Communauté PvP 1.8.9 & Tournois MashClient Turbo FPS".into(),
+            icon_url: None,
             invite_code: "MASH-PVP-189".into(),
             owner_id: "usr-rawsq".into(),
             banner_style: "accretion".into(),
+            banner_url: None,
+            custom_emojis: vec![
+                ServerCustomAsset { id: "em-sword".into(), name: "pvp189".into(), value: "⚔️".into() },
+                ServerCustomAsset { id: "em-trophy".into(), name: "ranked".into(), value: "🏆".into() },
+            ],
+            custom_stickers: vec![
+                ServerCustomAsset { id: "st-combo".into(), name: "Combo Lock".into(), value: "⚔️ 20 CPS COMBO".into() },
+            ],
             roles: vec![
                 ServerRole {
                     id: "role-mc-lead".into(),
@@ -778,9 +834,19 @@ impl MashStore {
             name: name.trim().chars().take(48).collect(),
             short_name,
             icon_type: icon_type.to_string(),
+            description: format!("Serveur communautaire P2P {}", name.trim()),
+            icon_url: None,
             invite_code: invite_code.clone(),
             owner_id: owner_id.to_string(),
             banner_style: "schwarzschild".into(),
+            banner_url: None,
+            custom_emojis: vec![
+                ServerCustomAsset { id: format!("em-{}", short_hex(6)), name: "singularity".into(), value: "🪐".into() },
+                ServerCustomAsset { id: format!("em-{}", short_hex(6)), name: "gg".into(), value: "🔥".into() },
+            ],
+            custom_stickers: vec![
+                ServerCustomAsset { id: format!("st-{}", short_hex(6)), name: "Bienvenue P2P".into(), value: "🚀 MASHVOICE P2P".into() },
+            ],
             roles: vec![
                 ServerRole {
                     id: admin_role_id.clone(),
@@ -1218,5 +1284,181 @@ impl MashStore {
         drop(st);
         self.save();
         srv
+    }
+
+    pub fn update_server_settings(
+        &self,
+        server_id: &str,
+        patch: ServerUpdatePatch,
+    ) -> Option<CommunityServer> {
+        let mut st = self.state.write();
+        let srv = st.servers.iter_mut().find(|s| s.id == server_id)?;
+
+        if let Some(name) = patch.name {
+            let trimmed: String = name.trim().chars().take(48).collect();
+            if !trimmed.is_empty() {
+                srv.name = trimmed;
+            }
+        }
+        if let Some(short) = patch.short_name {
+            let trimmed: String = short.trim().chars().take(4).collect();
+            if !trimmed.is_empty() {
+                srv.short_name = trimmed.to_uppercase();
+            }
+        }
+        if let Some(desc) = patch.description {
+            srv.description = desc.trim().chars().take(240).collect();
+        }
+        if let Some(it) = patch.icon_type {
+            if !it.trim().is_empty() {
+                srv.icon_type = it.trim().to_string();
+            }
+        }
+        if let Some(iu) = patch.icon_url {
+            let t = iu.trim();
+            srv.icon_url = if t.is_empty() { None } else { Some(t.to_string()) };
+        }
+        if let Some(bs) = patch.banner_style {
+            if !bs.trim().is_empty() {
+                srv.banner_style = bs.trim().to_string();
+            }
+        }
+        if let Some(bu) = patch.banner_url {
+            let t = bu.trim();
+            srv.banner_url = if t.is_empty() { None } else { Some(t.to_string()) };
+        }
+        if patch.regenerate_invite == Some(true) {
+            srv.invite_code = format!("MASH-{}", short_hex(6).to_uppercase());
+        }
+
+        let out = srv.clone();
+        drop(st);
+        self.save();
+        Some(out)
+    }
+
+    pub fn leave_or_delete_server(
+        &self,
+        server_id: &str,
+        user_id: &str,
+        force_delete: bool,
+    ) -> Result<Option<CommunityServer>, String> {
+        let mut st = self.state.write();
+        let idx = st
+            .servers
+            .iter()
+            .position(|s| s.id == server_id)
+            .ok_or_else(|| "Serveur introuvable.".to_string())?;
+
+        if force_delete {
+            if st.servers[idx].owner_id != user_id {
+                return Err("Seul le propriétaire du serveur peut le supprimer définitivement.".into());
+            }
+            let removed = st.servers.remove(idx);
+            for ch in &removed.channels {
+                st.messages.remove(&ch.id);
+            }
+            drop(st);
+            self.save();
+            return Ok(None);
+        }
+
+        st.servers[idx].members.retain(|m| m.user_id != user_id);
+        let updated = if st.servers[idx].members.is_empty() {
+            let removed = st.servers.remove(idx);
+            for ch in &removed.channels {
+                st.messages.remove(&ch.id);
+            }
+            None
+        } else {
+            if st.servers[idx].owner_id == user_id {
+                if let Some(next_owner) = st.servers[idx].members.first() {
+                    st.servers[idx].owner_id = next_owner.user_id.clone();
+                }
+            }
+            Some(st.servers[idx].clone())
+        };
+        drop(st);
+        self.save();
+        Ok(updated)
+    }
+
+    pub fn delete_channel(&self, server_id: &str, channel_id: &str) -> Option<CommunityServer> {
+        let mut st = self.state.write();
+        let srv = st.servers.iter_mut().find(|s| s.id == server_id)?;
+        if srv.channels.len() <= 1 {
+            return Some(srv.clone());
+        }
+        srv.channels.retain(|c| c.id != channel_id);
+        let out = srv.clone();
+        st.messages.remove(channel_id);
+        drop(st);
+        self.save();
+        Some(out)
+    }
+
+    pub fn delete_role(&self, server_id: &str, role_id: &str) -> Option<CommunityServer> {
+        let mut st = self.state.write();
+        let srv = st.servers.iter_mut().find(|s| s.id == server_id)?;
+        if srv.roles.len() <= 1 {
+            return Some(srv.clone());
+        }
+        srv.roles.retain(|r| r.id != role_id);
+        for m in &mut srv.members {
+            m.role_ids.retain(|r| r != role_id);
+        }
+        let out = srv.clone();
+        drop(st);
+        self.save();
+        Some(out)
+    }
+
+    pub fn add_server_asset(
+        &self,
+        server_id: &str,
+        kind: &str,
+        name: &str,
+        value: &str,
+    ) -> Option<CommunityServer> {
+        let mut st = self.state.write();
+        let srv = st.servers.iter_mut().find(|s| s.id == server_id)?;
+        let clean_name: String = name.trim().chars().take(32).collect();
+        let clean_val = value.trim().to_string();
+        if clean_name.is_empty() || clean_val.is_empty() {
+            return Some(srv.clone());
+        }
+        let asset = ServerCustomAsset {
+            id: format!("{}-{}", if kind == "sticker" { "st" } else { "em" }, short_hex(6)),
+            name: clean_name,
+            value: clean_val,
+        };
+        if kind == "sticker" {
+            srv.custom_stickers.push(asset);
+        } else {
+            srv.custom_emojis.push(asset);
+        }
+        let out = srv.clone();
+        drop(st);
+        self.save();
+        Some(out)
+    }
+
+    pub fn remove_server_asset(
+        &self,
+        server_id: &str,
+        kind: &str,
+        asset_id: &str,
+    ) -> Option<CommunityServer> {
+        let mut st = self.state.write();
+        let srv = st.servers.iter_mut().find(|s| s.id == server_id)?;
+        if kind == "sticker" {
+            srv.custom_stickers.retain(|x| x.id != asset_id);
+        } else {
+            srv.custom_emojis.retain(|x| x.id != asset_id);
+        }
+        let out = srv.clone();
+        drop(st);
+        self.save();
+        Some(out)
     }
 }

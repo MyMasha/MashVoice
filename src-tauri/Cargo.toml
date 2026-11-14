@@ -1,7 +1,7 @@
 [package]
 name = "mashvoice-tauri"
-version = "1.0.5"
-description = "MashVoice Singularity 4.1 — Native Rust Desktop & Mobile Shell (Tauri v2)"
+version = "1.0.6"
+description = "MashVoice Singularity 4.4 — Native Rust Desktop & Mobile Shell (Tauri v2)"
 authors = ["MyMasha"]
 license = "MIT"
 edition = "2021"

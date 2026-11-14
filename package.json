@@ -1,9 +1,9 @@
 {
   "name": "mashvoice",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "license": "MIT",
   "type": "module",
-  "description": "MashVoice Singularity 4.1 — Logiciel P2P Open-Source en Rust + Tauri v2 (Zero-IP Zyntra Relay, Vocal, Stream 120 FPS & QR Auth)",
+  "description": "MashVoice Singularity 4.4 — Logiciel P2P Open-Source en Rust + Tauri v2 (Zero-IP Zyntra, MashKrisp IA, Vocal, Stream 120 FPS & QR Auth)",
   "author": {
     "name": "MyMasha",
     "url": "https://github.com/MyMasha/MashVoice"
