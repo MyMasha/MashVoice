@@ -9,6 +9,8 @@
 const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' },
 ];
 
 function preferCodecInSdp(sdp, preferredCodec = 'H264') {
@@ -393,6 +395,7 @@ export class P2PMeshEngine {
       pc,
       dc: null,
       remoteStream,
+      pendingCandidates: [],
     };
     this.peers.set(peerKey, entry);
 
@@ -505,6 +508,14 @@ export class P2PMeshEngine {
     if (signal.type === 'sdp' && signal.description) {
       const desc = new RTCSessionDescription(signal.description);
       await pc.setRemoteDescription(desc);
+      while (entry.pendingCandidates.length > 0) {
+        const cand = entry.pendingCandidates.shift();
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(cand));
+        } catch {
+          // ignore benign ICE race
+        }
+      }
       if (desc.type === 'offer') {
         const answer = await pc.createAnswer();
         answer.sdp = preferCodecInSdp(answer.sdp, this.streamSettings.preferredCodec);
@@ -516,10 +527,14 @@ export class P2PMeshEngine {
         });
       }
     } else if (signal.type === 'ice' && signal.candidate) {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
-      } catch {
-        // ignore benign ICE race
+      if (!pc.remoteDescription) {
+        entry.pendingCandidates.push(signal.candidate);
+      } else {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+        } catch {
+          // ignore benign ICE race
+        }
       }
     }
   }

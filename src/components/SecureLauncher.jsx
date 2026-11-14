@@ -31,14 +31,8 @@ export default function SecureLauncher({
 }) {
   const [navTab, setNavTab] = useState('connexion'); // 'connexion' | 'optimisations' | 'updater' | 'systeme'
   const [authMode, setAuthMode] = useState('token'); // 'token' | 'qr'
-  const [username, setUsername] = useState('rawsq');
+  const [username, setUsername] = useState('');
   const [connectionToken, setConnectionToken] = useState('');
-  const [joinRemoteMode, setJoinRemoteMode] = useState(() =>
-    Boolean(window.mashNative?.getRemoteNode?.())
-  );
-  const [remoteNodeInput, setRemoteNodeInput] = useState(
-    () => window.mashNative?.getRemoteNode?.() || ''
-  );
   const [rememberVault, setRememberVault] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState(lockReason || '');
@@ -56,8 +50,9 @@ export default function SecureLauncher({
     if (lockReason) setErrorMsg(lockReason);
   }, [lockReason]);
 
-  // Load saved token from encrypted vault if available
+  // Load saved token from encrypted vault if available & ensure local Rust engine is active
   useEffect(() => {
+    window.mashNative?.setRemoteNode?.('');
     const loadSaved = async () => {
       if (window.mashNative?.getVault) {
         const v = await window.mashNative.getVault();
@@ -75,10 +70,10 @@ export default function SecureLauncher({
 
   // Auto-fill local Founder token on host PC when connectionToken is still empty
   useEffect(() => {
-    if (!joinRemoteMode && !connectionToken && bootstrap?.starterTokens?.[0]?.token) {
+    if (!connectionToken && bootstrap?.starterTokens?.[0]?.token) {
       setConnectionToken(bootstrap.starterTokens[0].token);
     }
-  }, [bootstrap, joinRemoteMode, connectionToken]);
+  }, [bootstrap, connectionToken]);
 
   const createQrChallenge = async () => {
     setQrScannedBy(null);
@@ -150,6 +145,10 @@ export default function SecureLauncher({
   const handleTokenLogin = async (e) => {
     e?.preventDefault();
     setErrorMsg('');
+    if (!username.trim()) {
+      setErrorMsg('Entre ton pseudo (ex: rawsq, v0dka...) avant de lancer MashVoice.');
+      return;
+    }
     if (!connectionToken.trim()) {
       setErrorMsg('Accès refusé : le Token de Connexion obligatoire est requis pour entrer.');
       return;
@@ -161,7 +160,7 @@ export default function SecureLauncher({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           connectionToken: connectionToken.trim(),
-          username: username.trim() || 'rawsq',
+          username: username.trim(),
           deviceType: 'desktop',
           deviceName: window.mashNative?.isElectron ? 'MashVoice Electron PC' : 'MashVoice PC',
         }),
@@ -358,61 +357,6 @@ export default function SecureLauncher({
 
             {authMode === 'token' ? (
               <form onSubmit={handleTokenLogin} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-                {window.mashNative?.setRemoteNode && (
-                  <div className="field-group">
-                    <label className="field-label">
-                      <span>Noeud P2P cible</span>
-                      <span style={{ color: 'var(--gold-primary)', fontSize: 11 }}>
-                        {joinRemoteMode ? 'Rejoindre un ami' : 'Mon PC (Hôte)'}
-                      </span>
-                    </label>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button
-                        type="button"
-                        className="btn-chip"
-                        style={{
-                          flex: 1,
-                          justifyContent: 'center',
-                          borderColor: !joinRemoteMode ? 'var(--gold-primary)' : undefined,
-                          color: !joinRemoteMode ? 'var(--gold-bright)' : undefined,
-                        }}
-                        onClick={() => {
-                          setJoinRemoteMode(false);
-                          window.mashNative.setRemoteNode('');
-                        }}
-                      >
-                        Héberger sur mon PC
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-chip"
-                        style={{
-                          flex: 1,
-                          justifyContent: 'center',
-                          borderColor: joinRemoteMode ? 'var(--gold-primary)' : undefined,
-                          color: joinRemoteMode ? 'var(--gold-bright)' : undefined,
-                        }}
-                        onClick={() => setJoinRemoteMode(true)}
-                      >
-                        Rejoindre l&apos;IP d&apos;un ami
-                      </button>
-                    </div>
-                    {joinRemoteMode && (
-                      <input
-                        className="mash-input mono"
-                        style={{ marginTop: 6 }}
-                        value={remoteNodeInput}
-                        onChange={(e) => {
-                          setRemoteNodeInput(e.target.value);
-                          window.mashNative.setRemoteNode(e.target.value);
-                        }}
-                        placeholder="ex: 26.48.12.90:3080 ou 192.168.1.25:3080"
-                        autoComplete="off"
-                      />
-                    )}
-                  </div>
-                )}
-
                 <div className="field-group">
                   <label className="field-label" htmlFor="launcher-username">
                     <span>Ton Pseudo</span>
@@ -423,7 +367,7 @@ export default function SecureLauncher({
                     className="mash-input"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Entre ton pseudo (ex: Masha)"
+                    placeholder="Choisis ton pseudo (ex: rawsq, v0dka...)"
                     autoComplete="off"
                   />
                 </div>
@@ -444,7 +388,7 @@ export default function SecureLauncher({
                   />
                 </div>
 
-                {!joinRemoteMode && starterTokens.some((t) => t.token) && (
+                {starterTokens.some((t) => t.token) && (
                   <div className="starter-token-box">
                     <div style={{ fontSize: 11, color: 'var(--gold-bright)', fontWeight: 600 }}>
                       Accès propriétaire local (clique pour remplir ton Token) :

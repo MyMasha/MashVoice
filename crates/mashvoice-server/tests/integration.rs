@@ -295,3 +295,118 @@ fn tauri_gui_main_thread_setup_never_panics_outside_tokio() {
     join.join()
         .expect("build_router on non-Tokio GUI thread must never panic");
 }
+
+#[tokio::test]
+async fn global_p2p_peer_sync_and_friend_input_validation() {
+    let (base, _ws_url, tmp_dir) = spawn_test_server().await;
+    let client = reqwest::Client::new();
+
+    let boot: Value = client
+        .get(format!("{}/api/bootstrap/public", base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let valid_token = boot["starterTokens"][0]["token"].as_str().unwrap();
+
+    let login_res: Value = client
+        .post(format!("{}/api/auth/login", base))
+        .json(&json!({
+            "username": "rawsq",
+            "connectionToken": valid_token
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let session_tok = login_res["sessionToken"].as_str().unwrap();
+
+    // Reject accidental token or IP paste in Add Friend
+    let bad_tok = client
+        .post(format!("{}/api/friends/add", base))
+        .bearer_auth(session_tok)
+        .json(&json!({ "query": valid_token }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_tok.status().as_u16(), 400);
+
+    let bad_ip = client
+        .post(format!("{}/api/friends/add", base))
+        .bearer_auth(session_tok)
+        .json(&json!({ "query": "127.0.0.1:3080" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_ip.status().as_u16(), 400);
+
+    // Sync remote friend v0dka across P2P mesh
+    let sync_res: Value = client
+        .post(format!("{}/api/p2p/sync-peer", base))
+        .bearer_auth(session_tok)
+        .json(&json!({
+            "peer": {
+                "id": "usr-v0dka99",
+                "username": "v0dka",
+                "displayName": "v0dka",
+                "tag": "4921",
+                "peerId": "p2p-mash-v0dka-d93b",
+                "avatarColor": "#5ec2a6",
+                "status": "online",
+                "customStatus": "Connecté en P2P Rust",
+                "activity": null,
+                "createdAt": "2026-11-14T16:00:00Z"
+            }
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(sync_res["ok"], true);
+    let dm_id = sync_res["dmChannelId"].as_str().unwrap().to_string();
+    assert_eq!(dm_id, "dm:usr-rawsq:usr-v0dka99");
+
+    // Sync incoming encrypted DM from v0dka
+    let msg_res: Value = client
+        .post(format!("{}/api/p2p/sync-message", base))
+        .bearer_auth(session_tok)
+        .json(&json!({
+            "channelId": dm_id,
+            "message": {
+                "id": "msg-remote-1",
+                "channelId": dm_id,
+                "authorId": "usr-v0dka99",
+                "content": "Salut rawsq ! P2P Internet OK",
+                "attachment": null,
+                "replyTo": null,
+                "createdAt": "2026-11-14T16:01:00Z",
+                "pinned": false,
+                "p2pVerified": true,
+                "reactions": {}
+            }
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(msg_res["inserted"], true);
+
+    // Delete friend
+    let del_res = client
+        .delete(format!("{}/api/friends/usr-v0dka99", base))
+        .bearer_auth(session_tok)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(del_res.status().as_u16(), 200);
+
+    let _ = std::fs::remove_dir_all(tmp_dir);
+}

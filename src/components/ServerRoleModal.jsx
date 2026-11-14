@@ -15,10 +15,12 @@ export default function ServerRoleModal({
   usersMap,
   sessionToken,
   onServerChange,
+  onJoinRemoteServer,
   onClose,
 }) {
   const [srvName, setSrvName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
+  const [joiningRemote, setJoiningRemote] = useState(false);
   const [chName, setChName] = useState('');
   const [chType, setChType] = useState('text');
 
@@ -50,15 +52,30 @@ export default function ServerRoleModal({
   const handleJoinServer = async (e) => {
     e.preventDefault();
     setErr('');
+    if (!inviteCode.trim()) return;
     const res = await fetch('/api/servers/join', {
       method: 'POST',
       headers,
       body: JSON.stringify({ inviteCode }),
     });
     const data = await res.json();
-    if (!res.ok) return setErr(data.error || 'Code introuvable');
-    onServerChange(data.server, true);
-    onClose();
+    if (res.ok && data.server) {
+      onServerChange(data.server, true);
+      onClose();
+      return;
+    }
+    if (onJoinRemoteServer) {
+      setJoiningRemote(true);
+      await onJoinRemoteServer(inviteCode.trim());
+      setTimeout(() => {
+        setJoiningRemote(false);
+        setErr(
+          "Demande envoyée sur le réseau P2P Internet ! Assure-toi que le créateur du serveur est connecté."
+        );
+      }, 3200);
+      return;
+    }
+    return setErr(data.error || 'Code introuvable');
   };
 
   const handleCreateChannel = async (e) => {
@@ -144,8 +161,13 @@ export default function ServerRoleModal({
                 value={inviteCode}
                 onChange={(e) => setInviteCode(e.target.value)}
               />
-              <button type="submit" className="btn-chip" style={{ padding: '9px 14px' }}>
-                Rejoindre le serveur
+              <button
+                type="submit"
+                className="btn-chip"
+                style={{ padding: '9px 14px' }}
+                disabled={joiningRemote}
+              >
+                {joiningRemote ? 'Connexion au serveur P2P...' : 'Rejoindre le serveur'}
               </button>
             </form>
           </>

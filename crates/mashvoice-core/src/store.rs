@@ -570,10 +570,38 @@ impl MashStore {
     pub fn new(data_dir: &Path, sec: &SecurityEngine) -> Self {
         let _ = fs::create_dir_all(data_dir);
         let db_file = data_dir.join("mashvoice-state.json");
-        let initial = fs::read_to_string(&db_file)
+        let mut initial = fs::read_to_string(&db_file)
             .ok()
             .and_then(|s| serde_json::from_str::<PersistedState>(&s).ok())
             .unwrap_or_else(|| build_initial_state(sec));
+
+        // Clean up any accidental contacts where a token or IP:port was pasted into "Add Friend",
+        // as well as demo bot friendships (usr-nyx, usr-kael) so real friends stand out cleanly.
+        let mut bad_ids = HashSet::new();
+        for u in &initial.users {
+            let dn_low = u.display_name.to_lowercase();
+            let un_low = u.username.to_lowercase();
+            if dn_low.starts_with("mash-sv4.")
+                || un_low.starts_with("mash-sv4")
+                || dn_low.contains("127.0.0.1")
+                || dn_low.contains(":3080")
+                || un_low.starts_with("p2p-mash-")
+                || dn_low.starts_with("p2p-mash-")
+            {
+                bad_ids.insert(u.id.clone());
+            }
+        }
+        if !bad_ids.is_empty() {
+            initial.users.retain(|u| !bad_ids.contains(&u.id));
+        }
+        initial.friendships.retain(|(a, b)| {
+            !bad_ids.contains(a)
+                && !bad_ids.contains(b)
+                && a != "usr-nyx"
+                && b != "usr-nyx"
+                && a != "usr-kael"
+                && b != "usr-kael"
+        });
 
         let store = Self {
             db_file,
@@ -658,12 +686,6 @@ impl MashStore {
                         role_ids: vec!["role-member".into()],
                         joined_at: Utc::now().to_rfc3339(),
                     });
-                }
-            }
-
-            for def_friend in ["usr-rawsq", "usr-nyx", "usr-kael"] {
-                if def_friend != uid {
-                    st.friendships.push((uid.clone(), def_friend.to_string()));
                 }
             }
 
@@ -1067,5 +1089,134 @@ impl MashStore {
         drop(st);
         self.save();
         updated
+    }
+
+    pub fn remove_friendship(&self, user_a: &str, user_b: &str) -> bool {
+        let mut st = self.state.write();
+        let before = st.friendships.len();
+        st.friendships
+            .retain(|(a, b)| !((a == user_a && b == user_b) || (a == user_b && b == user_a)));
+        let removed = st.friendships.len() != before;
+        drop(st);
+        if removed {
+            self.save();
+        }
+        removed
+    }
+
+    pub fn upsert_remote_peer(&self, mut peer: UserProfile, me_id: &str) -> (UserProfile, String) {
+        if peer.id == me_id {
+            peer.id = format!("usr-{}", peer.peer_id);
+        }
+        if peer.status.trim().is_empty() {
+            peer.status = "online".into();
+        }
+
+        {
+            let mut st = self.state.write();
+            let mut stale_ids = Vec::new();
+            for u in &st.users {
+                if u.id != me_id
+                    && u.id != peer.id
+                    && (u.peer_id.eq_ignore_ascii_case(&peer.peer_id)
+                        || (u.username.eq_ignore_ascii_case(&peer.username) && u.tag == peer.tag))
+                {
+                    stale_ids.push(u.id.clone());
+                }
+            }
+
+            if !stale_ids.is_empty() {
+                st.users.retain(|u| !stale_ids.contains(&u.id));
+                st.friendships
+                    .retain(|(a, b)| !stale_ids.contains(a) && !stale_ids.contains(b));
+            }
+
+            if let Some(existing) = st.users.iter_mut().find(|u| u.id == peer.id) {
+                *existing = peer.clone();
+            } else {
+                st.users.push(peer.clone());
+            }
+
+            let exists_fr = st
+                .friendships
+                .iter()
+                .any(|(a, b)| (a == me_id && b == &peer.id) || (a == &peer.id && b == me_id));
+            if !exists_fr && peer.id != me_id {
+                st.friendships.push((me_id.to_string(), peer.id.clone()));
+            }
+        }
+
+        self.save();
+        let dm_id = Self::dm_channel_id(me_id, &peer.id);
+        (peer, dm_id)
+    }
+
+    pub fn upsert_synced_message(
+        &self,
+        channel_id: &str,
+        mut msg: ChatMessage,
+        author_profile: Option<UserProfile>,
+    ) -> Option<ChatMessage> {
+        msg.channel_id = channel_id.to_string();
+        let mut st = self.state.write();
+
+        if let Some(author) = author_profile {
+            if let Some(existing) = st.users.iter_mut().find(|u| u.id == author.id) {
+                existing.display_name = author.display_name;
+                existing.avatar_color = author.avatar_color;
+                existing.status = author.status;
+                existing.peer_id = author.peer_id;
+            } else {
+                st.users.push(author);
+            }
+        }
+
+        let list = st.messages.entry(channel_id.to_string()).or_default();
+        if list.iter().any(|m| m.id == msg.id) {
+            return None;
+        }
+        list.push(msg.clone());
+        drop(st);
+        self.save();
+        Some(msg)
+    }
+
+    pub fn upsert_synced_server(
+        &self,
+        mut srv: CommunityServer,
+        me_id: &str,
+        host_profile: Option<UserProfile>,
+    ) -> CommunityServer {
+        let mut st = self.state.write();
+
+        if let Some(host) = host_profile {
+            if !st.users.iter().any(|u| u.id == host.id) {
+                st.users.push(host);
+            }
+        }
+
+        if !srv.members.iter().any(|m| m.user_id == me_id) {
+            let default_role = srv
+                .roles
+                .iter()
+                .min_by_key(|r| r.position)
+                .map(|r| vec![r.id.clone()])
+                .unwrap_or_default();
+            srv.members.push(ServerMember {
+                user_id: me_id.to_string(),
+                role_ids: default_role,
+                joined_at: Utc::now().to_rfc3339(),
+            });
+        }
+
+        if let Some(existing) = st.servers.iter_mut().find(|s| s.id == srv.id) {
+            *existing = srv.clone();
+        } else {
+            st.servers.push(srv.clone());
+        }
+
+        drop(st);
+        self.save();
+        srv
     }
 }

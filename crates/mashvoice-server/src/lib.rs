@@ -5,7 +5,7 @@ use axum::{
     },
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use chrono::Utc;
@@ -15,7 +15,7 @@ use mashvoice_core::{
     security::{
         parse_qr_payload, LoginRateLimiter, QrChallengeManager, SecurityEngine, SessionPayload,
     },
-    store::{MashStore, UserProfile},
+    store::{ChatMessage, CommunityServer, MashStore, UserProfile},
     updater::{UpdaterService, CURRENT_VERSION, GITHUB_ORG, GITHUB_REPO, PREFILLED_GITHUB_TOKEN_URL},
 };
 use parking_lot::RwLock;
@@ -272,6 +272,10 @@ pub fn build_router(data_dir: &Path, dist_dir: Option<PathBuf>) -> (Router, Arc<
         .route("/state", get(api_workspace_state))
         .route("/profile", patch(api_profile_update))
         .route("/friends/add", post(api_friends_add))
+        .route("/friends/:friend_id", delete(api_friends_remove))
+        .route("/p2p/sync-peer", post(api_p2p_sync_peer))
+        .route("/p2p/sync-message", post(api_p2p_sync_message))
+        .route("/p2p/sync-server", post(api_p2p_sync_server))
         .route("/messages/:channel_id", get(api_messages_get).post(api_messages_post))
         .route("/messages/:channel_id/:message_id/react", post(api_messages_react))
         .route("/servers", post(api_servers_create))
@@ -835,7 +839,34 @@ async fn api_friends_add(
     if q.is_empty() {
         return Ok((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Entrez un pseudo ou un Peer ID P2P." })),
+            Json(json!({ "error": "Entrez le pseudo (ex: v0dka) ou le Peer ID (p2p-mash-...) de ton ami." })),
+        )
+            .into_response());
+    }
+
+    let q_low = q.to_lowercase();
+    if q_low.starts_with("mash-sv4")
+        || q_low.starts_with("http://")
+        || q_low.starts_with("https://")
+        || q_low.contains("127.0.0.1")
+        || q_low.contains(":3080")
+    {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Ceci est un Token ou une IP ! Entre uniquement le pseudo (ex: v0dka#1234) ou le Peer ID (p2p-mash-...) de ton ami."
+            })),
+        )
+            .into_response());
+    }
+
+    if q.eq_ignore_ascii_case(&me.username)
+        || q.eq_ignore_ascii_case(&me.peer_id)
+        || q.eq_ignore_ascii_case(&format!("{}#{}", me.username, me.tag))
+    {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Vous ne pouvez pas vous ajouter vous-même." })),
         )
             .into_response());
     }
@@ -852,6 +883,16 @@ async fn api_friends_add(
             })
             .cloned()
     };
+
+    let global_only = body["globalOnly"].as_bool().unwrap_or(false);
+    if found.is_none() && global_only {
+        return Ok(Json(json!({
+            "ok": true,
+            "pendingGlobal": true,
+            "query": q,
+        }))
+        .into_response());
+    }
 
     let target = found.unwrap_or_else(|| st.store.find_or_create_user(q, Some(q)));
     if target.id == me.id {
@@ -870,6 +911,98 @@ async fn api_friends_add(
     );
 
     Ok(Json(json!({ "ok": true, "friend": target, "dmChannelId": dm_id })).into_response())
+}
+
+async fn api_friends_remove(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(friend_id): AxumPath<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (_sess, me) = st.extract_auth(&headers)?;
+    let removed = st.store.remove_friendship(&me.id, &friend_id);
+    st.broadcast_all(
+        &json!({ "type": "friendship:added", "users": [me.id, friend_id] }),
+        None,
+    );
+    Ok(Json(json!({ "ok": true, "removed": removed })))
+}
+
+async fn api_p2p_sync_peer(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let (_sess, me) = st.extract_auth(&headers)?;
+    let Ok(peer) = serde_json::from_value::<UserProfile>(body["peer"].clone()) else {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Profil pair P2P invalide." })),
+        )
+            .into_response());
+    };
+    let (saved_peer, dm_id) = st.store.upsert_remote_peer(peer, &me.id);
+    st.broadcast_all(
+        &json!({ "type": "friendship:added", "users": [me.id, saved_peer.id], "peer": saved_peer }),
+        None,
+    );
+    Ok(Json(json!({
+        "ok": true,
+        "friend": saved_peer,
+        "dmChannelId": dm_id,
+    }))
+    .into_response())
+}
+
+async fn api_p2p_sync_message(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let _ = st.extract_auth(&headers)?;
+    let channel_id = body["channelId"].as_str().unwrap_or("").trim();
+    if channel_id.is_empty() {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "channelId requis." })),
+        )
+            .into_response());
+    }
+    let Ok(msg) = serde_json::from_value::<ChatMessage>(body["message"].clone()) else {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Message P2P invalide." })),
+        )
+            .into_response());
+    };
+    let author = serde_json::from_value::<UserProfile>(body["author"].clone()).ok();
+    if let Some(saved) = st.store.upsert_synced_message(channel_id, msg, author) {
+        st.broadcast_all(
+            &json!({ "type": "chat:message", "channelId": channel_id, "message": saved }),
+            None,
+        );
+        Ok(Json(json!({ "ok": true, "inserted": true, "message": saved })).into_response())
+    } else {
+        Ok(Json(json!({ "ok": true, "inserted": false })).into_response())
+    }
+}
+
+async fn api_p2p_sync_server(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let (_sess, me) = st.extract_auth(&headers)?;
+    let Ok(srv) = serde_json::from_value::<CommunityServer>(body["server"].clone()) else {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Serveur P2P invalide." })),
+        )
+            .into_response());
+    };
+    let host = serde_json::from_value::<UserProfile>(body["host"].clone()).ok();
+    let saved = st.store.upsert_synced_server(srv, &me.id, host);
+    st.broadcast_all(&json!({ "type": "server:updated", "server": saved }), None);
+    Ok(Json(json!({ "ok": true, "server": saved })).into_response())
 }
 
 async fn api_messages_get(

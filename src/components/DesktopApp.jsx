@@ -28,12 +28,13 @@ import {
   Minus,
   Square,
   X,
-  KeyRound,
+  UserCheck,
 } from 'lucide-react';
 import BlackHoleCanvas from './BlackHoleCanvas.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import ServerRoleModal from './ServerRoleModal.jsx';
 import { P2PMeshEngine } from '../lib/p2pEngine.js';
+import { GlobalP2PMesh } from '../lib/globalMesh.js';
 import { mashSounds } from '../lib/soundEffects.js';
 
 const QUICK_EMOJIS = ['🔥', '⚡', '🪐', '🎯', '🛡️'];
@@ -87,7 +88,21 @@ export default function DesktopApp({
   const [typingUser, setTypingUser] = useState(null);
   const [friendQuery, setFriendQuery] = useState('');
   const [friendFeedback, setFriendFeedback] = useState('');
+  const [friendError, setFriendError] = useState('');
   const [copiedInvite, setCopiedInvite] = useState(false);
+
+  // Global Internet P2P Rendezvous state
+  const [meshStatus, setMeshStatus] = useState({ online: false, brokersConnected: 0 });
+  const [incomingRequests, setIncomingRequests] = useState(() => {
+    try {
+      const raw = localStorage.getItem('mashvoice.incomingFriendReqs');
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [sentRequests, setSentRequests] = useState([]);
+  const [incomingCall, setIncomingCall] = useState(null); // { from, roomId }
 
   // Voice & P2P Stream state
   const [activeVoiceRoomId, setActiveVoiceRoomId] = useState(null);
@@ -132,8 +147,44 @@ export default function DesktopApp({
 
   const wsRef = useRef(null);
   const p2pRef = useRef(null);
+  const globalMeshRef = useRef(null);
+  const meRef = useRef(me);
+  const workspaceRef = useRef(workspace);
+  const activeVoiceRoomRef = useRef(activeVoiceRoomId);
+  const sentRequestsRef = useRef(sentRequests);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    meRef.current = me;
+    globalMeshRef.current?.updateMe(me);
+  }, [me]);
+
+  useEffect(() => {
+    workspaceRef.current = workspace;
+    for (const srv of workspace.servers) {
+      globalMeshRef.current?.subscribeServer(srv);
+    }
+  }, [workspace]);
+
+  useEffect(() => {
+    activeVoiceRoomRef.current = activeVoiceRoomId;
+    if (activeVoiceRoomId) {
+      globalMeshRef.current?.subscribeRoom(activeVoiceRoomId);
+    }
+  }, [activeVoiceRoomId]);
+
+  useEffect(() => {
+    sentRequestsRef.current = sentRequests;
+  }, [sentRequests]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mashvoice.incomingFriendReqs', JSON.stringify(incomingRequests));
+    } catch {
+      // ignore
+    }
+  }, [incomingRequests]);
 
   const authHeaders = useMemo(
     () => ({
@@ -206,6 +257,306 @@ export default function DesktopApp({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messagesByChannel[selectedChannelId]?.length]);
 
+  const syncRemotePeer = async (peerProfile, switchToDm = false) => {
+    if (!peerProfile) return null;
+    const res = await fetch('/api/p2p/sync-peer', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ peer: peerProfile }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data?.ok) {
+      await fetchWorkspace();
+      if (switchToDm && data.dmChannelId) {
+        setSelectedServerId('dms');
+        setSelectedChannelId(data.dmChannelId);
+      }
+      return data;
+    }
+    return null;
+  };
+
+  const handleAcceptFriendRequest = async (peerProfile) => {
+    if (!peerProfile) return;
+    setIncomingRequests((prev) =>
+      prev.filter((r) => r.peerId !== peerProfile.peerId && r.id !== peerProfile.id)
+    );
+    mashSounds.unlockGate();
+    await globalMeshRef.current?.sendFriendAccept(peerProfile);
+    await syncRemotePeer(peerProfile, true);
+    setFriendError('');
+    setFriendFeedback(`✓ ${peerProfile.displayName} est maintenant ton ami P2P !`);
+    setTimeout(() => setFriendFeedback(''), 3500);
+  };
+
+  const handleDeclineFriendRequest = (peerProfile) => {
+    if (!peerProfile) return;
+    setIncomingRequests((prev) =>
+      prev.filter((r) => r.peerId !== peerProfile.peerId && r.id !== peerProfile.id)
+    );
+  };
+
+  const handleRemoveFriend = async (e, friendId) => {
+    e.stopPropagation();
+    await fetch(`/api/friends/${encodeURIComponent(friendId)}`, {
+      method: 'DELETE',
+      headers: authHeaders,
+    });
+    await fetchWorkspace();
+    if (selectedChannelId.includes(friendId)) {
+      setSelectedChannelId('ch-general');
+      setSelectedServerId('srv-singularity');
+    }
+  };
+
+  // Initialize Global Encrypted P2P Mesh (Zero-IP Internet Rendezvous)
+  useEffect(() => {
+    if (!me?.peerId) return undefined;
+    const mesh = new GlobalP2PMesh({
+      me,
+      onStatusChange: (st) => setMeshStatus(st),
+      onEvent: async (data) => {
+        const curMe = meRef.current;
+        if (!curMe) return;
+
+        switch (data.type) {
+          case 'friend:request': {
+            const from = data.from;
+            if (!from || from.peerId === curMe.peerId) return;
+            const alreadyFriend = workspaceRef.current.friends.some(
+              (f) => f.id === from.id || f.peerId === from.peerId
+            );
+            const weRequestedThem = sentRequestsRef.current.some((q) => {
+              const ql = q.toLowerCase();
+              return (
+                ql === from.username?.toLowerCase() ||
+                ql === from.peerId?.toLowerCase() ||
+                ql === `${from.username}#${from.tag}`.toLowerCase()
+              );
+            });
+
+            if (alreadyFriend || weRequestedThem) {
+              await mesh.sendFriendAccept(from);
+              await syncRemotePeer(from, weRequestedThem);
+              if (weRequestedThem) {
+                setSentRequests((prev) => prev.filter((q) => q.toLowerCase() !== from.username?.toLowerCase()));
+                setFriendFeedback(`✓ Connexion P2P établie avec ${from.displayName} !`);
+                setTimeout(() => setFriendFeedback(''), 3500);
+              }
+              return;
+            }
+
+            mashSounds.messageTick();
+            setIncomingRequests((prev) => {
+              if (prev.some((r) => r.peerId === from.peerId || r.id === from.id)) return prev;
+              return [from, ...prev];
+            });
+            break;
+          }
+
+          case 'friend:accept': {
+            const from = data.from;
+            if (!from || from.peerId === curMe.peerId) return;
+            mashSounds.unlockGate();
+            setSentRequests((prev) =>
+              prev.filter((q) => {
+                const ql = q.toLowerCase();
+                return (
+                  ql !== from.username?.toLowerCase() &&
+                  ql !== from.peerId?.toLowerCase() &&
+                  ql !== `${from.username}#${from.tag}`.toLowerCase()
+                );
+              })
+            );
+            await syncRemotePeer(from, true);
+            setFriendError('');
+            setFriendFeedback(`✓ ${from.displayName} a accepté ta demande d'ami !`);
+            setTimeout(() => setFriendFeedback(''), 4000);
+            break;
+          }
+
+          case 'dm:message': {
+            const from = data.from;
+            if (!from || !data.message) return;
+            let localFriend = workspaceRef.current.friends.find(
+              (f) => f.id === from.id || f.peerId === from.peerId
+            );
+            let dmId = localFriend
+              ? `dm:${[curMe.id, localFriend.id].sort().join(':')}`
+              : null;
+            if (!dmId) {
+              const synced = await syncRemotePeer(from, false);
+              dmId = synced?.dmChannelId || `dm:${[curMe.id, from.id].sort().join(':')}`;
+            }
+            await fetch('/api/p2p/sync-message', {
+              method: 'POST',
+              headers: authHeaders,
+              body: JSON.stringify({
+                channelId: dmId,
+                message: { ...data.message, channelId: dmId },
+                author: from,
+              }),
+            });
+            break;
+          }
+
+          case 'srv:message': {
+            if (!data.channelId || !data.message) return;
+            await fetch('/api/p2p/sync-message', {
+              method: 'POST',
+              headers: authHeaders,
+              body: JSON.stringify({
+                channelId: data.channelId,
+                message: data.message,
+                author: data.from,
+              }),
+            });
+            break;
+          }
+
+          case 'srv:join-request': {
+            if (!data.inviteCode || !data.from) return;
+            const targetSrv = workspaceRef.current.servers.find(
+              (s) => s.inviteCode?.toUpperCase() === String(data.inviteCode).toUpperCase()
+            );
+            if (targetSrv) {
+              await mesh.sendServerSnapshotToPeer(data.from, targetSrv);
+            }
+            break;
+          }
+
+          case 'srv:welcome': {
+            if (!data.server) return;
+            const res = await fetch('/api/p2p/sync-server', {
+              method: 'POST',
+              headers: authHeaders,
+              body: JSON.stringify({ server: data.server, host: data.from }),
+            });
+            const saved = await res.json().catch(() => ({}));
+            if (saved?.ok && saved.server) {
+              await fetchWorkspace();
+              setServerModalMode(null);
+              setSelectedServerId(saved.server.id);
+              const firstTxt = saved.server.channels?.find((c) => c.type === 'text');
+              if (firstTxt) setSelectedChannelId(firstTxt.id);
+            }
+            break;
+          }
+
+          case 'call:ring': {
+            if (!data.from || !data.roomId) return;
+            mashSounds.joinVoice();
+            setIncomingCall({ from: data.from, roomId: data.roomId });
+            break;
+          }
+
+          case 'room:peer-joined': {
+            if (!data.roomId || !data.peerKey || data.peerKey === curMe.peerId) return;
+            const occ = {
+              peerKey: data.peerKey,
+              userId: data.user?.id || data.peerKey,
+              username: data.user?.username || 'pair',
+              displayName: data.user?.displayName || 'Pair P2P',
+              avatarColor: data.user?.avatarColor || '#5ec2a6',
+              deviceType: 'desktop',
+            };
+            setWorkspace((prev) => {
+              const curList = prev.voiceRooms[data.roomId] || [];
+              const filtered = curList.filter((p) => p.peerKey !== data.peerKey);
+              return {
+                ...prev,
+                voiceRooms: { ...prev.voiceRooms, [data.roomId]: [...filtered, occ] },
+              };
+            });
+
+            if (activeVoiceRoomRef.current === data.roomId) {
+              await mesh.broadcastRoomEvent(data.roomId, 'room:peer-here', {
+                targetPeerKey: data.peerKey,
+              });
+              if (p2pRef.current && !p2pRef.current.peers.has(data.peerKey)) {
+                await p2pRef.current.createPeerConnection(data.peerKey, occ, false);
+              }
+            }
+            break;
+          }
+
+          case 'room:peer-here': {
+            if (!data.roomId || !data.peerKey || data.peerKey === curMe.peerId) return;
+            const occ = {
+              peerKey: data.peerKey,
+              userId: data.user?.id || data.peerKey,
+              username: data.user?.username || 'pair',
+              displayName: data.user?.displayName || 'Pair P2P',
+              avatarColor: data.user?.avatarColor || '#5ec2a6',
+              deviceType: 'desktop',
+            };
+            setWorkspace((prev) => {
+              const curList = prev.voiceRooms[data.roomId] || [];
+              const filtered = curList.filter((p) => p.peerKey !== data.peerKey);
+              return {
+                ...prev,
+                voiceRooms: { ...prev.voiceRooms, [data.roomId]: [...filtered, occ] },
+              };
+            });
+
+            if (
+              activeVoiceRoomRef.current === data.roomId &&
+              data.targetPeerKey === curMe.peerId &&
+              p2pRef.current &&
+              !p2pRef.current.peers.has(data.peerKey)
+            ) {
+              await p2pRef.current.createPeerConnection(data.peerKey, occ, true);
+            }
+            break;
+          }
+
+          case 'room:peer-left': {
+            if (!data.roomId || !data.peerKey) return;
+            setWorkspace((prev) => {
+              const curList = prev.voiceRooms[data.roomId] || [];
+              return {
+                ...prev,
+                voiceRooms: {
+                  ...prev.voiceRooms,
+                  [data.roomId]: curList.filter((p) => p.peerKey !== data.peerKey),
+                },
+              };
+            });
+            p2pRef.current?.handlePeerLeft(data.peerKey);
+            break;
+          }
+
+          case 'webrtc:signal': {
+            if (
+              activeVoiceRoomRef.current === data.roomId &&
+              data.fromPeerKey &&
+              data.signal
+            ) {
+              await p2pRef.current?.handleSignal(data.fromPeerKey, data.fromUser, data.signal);
+            }
+            break;
+          }
+
+          default:
+            break;
+        }
+      },
+    });
+
+    globalMeshRef.current = mesh;
+    for (const srv of workspaceRef.current.servers) {
+      mesh.subscribeServer(srv);
+    }
+    if (activeVoiceRoomRef.current) {
+      mesh.subscribeRoom(activeVoiceRoomRef.current);
+    }
+
+    return () => {
+      mesh.destroy();
+      globalMeshRef.current = null;
+    };
+  }, [me?.peerId, sessionToken]);
+
   // Initialize P2P Engine + Real-time WebSocket with continuous Token Heartbeat
   useEffect(() => {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -216,6 +567,14 @@ export default function DesktopApp({
 
     const p2p = new P2PMeshEngine({
       sendSignal: (payload) => {
+        if (String(payload?.targetPeerKey || '').startsWith('p2p-mash-')) {
+          globalMeshRef.current?.sendWebRtcSignal(
+            payload.targetPeerKey,
+            payload.roomId,
+            payload.signal
+          );
+          return;
+        }
         if (ws.readyState === 1) {
           ws.send(JSON.stringify({ type: 'p2p:signal', ...payload }));
         }
@@ -359,7 +718,7 @@ export default function DesktopApp({
   };
 
   // Join a P2P Voice / Stream Channel or Direct DM Call
-  const joinVoiceChannel = async (roomId, label) => {
+  const joinVoiceChannel = async (roomId, label, targetDmPeer = null) => {
     if (activeVoiceRoomId === roomId) return;
     mashSounds.joinVoice();
     setActiveVoiceRoomId(roomId);
@@ -367,6 +726,7 @@ export default function DesktopApp({
     setCameraOn(false);
     setScreenOn(false);
     setLocalPreviewStream(null);
+    setIncomingCall(null);
 
     if (wsRef.current?.readyState === 1) {
       wsRef.current.send(
@@ -383,12 +743,24 @@ export default function DesktopApp({
           },
         })
       );
+    } else if (me?.peerId) {
+      await p2pRef.current?.joinRoom(roomId, me.peerId, []);
     }
+
+    globalMeshRef.current?.subscribeRoom(roomId);
+    setTimeout(() => {
+      globalMeshRef.current?.broadcastRoomEvent(roomId, 'room:peer-joined');
+      if (targetDmPeer) {
+        globalMeshRef.current?.ringPeerForCall(targetDmPeer, roomId);
+      }
+    }, 250);
   };
 
   const leaveVoiceChannel = () => {
     if (!activeVoiceRoomId) return;
+    const prevRoom = activeVoiceRoomId;
     mashSounds.leaveVoice();
+    globalMeshRef.current?.broadcastRoomEvent(prevRoom, 'room:peer-left');
     p2pRef.current?.leaveRoom();
     if (wsRef.current?.readyState === 1) {
       wsRef.current.send(JSON.stringify({ type: 'p2p:leave-room' }));
@@ -484,12 +856,20 @@ export default function DesktopApp({
     });
     const data = await res.json();
     if (data.ok && data.message) {
-      // Also push directly over P2P RTCDataChannel to connected mesh peers
       p2pRef.current?.broadcastP2PData({
         kind: 'direct-chat',
         channelId: selectedChannelId,
         message: data.message,
       });
+
+      if (selectedServerId === 'dms') {
+        const dmEntry = workspace.dmChannels.find((d) => d.id === selectedChannelId);
+        if (dmEntry?.peer) {
+          globalMeshRef.current?.sendDirectMessage(dmEntry.peer, selectedChannelId, data.message);
+        }
+      } else if (currentServer) {
+        globalMeshRef.current?.sendServerMessage(currentServer.id, selectedChannelId, data.message);
+      }
     }
   };
 
@@ -521,23 +901,55 @@ export default function DesktopApp({
 
   const handleAddFriend = async (e) => {
     e.preventDefault();
-    if (!friendQuery.trim()) return;
+    const q = friendQuery.trim();
+    if (!q) return;
+    setFriendError('');
+    setFriendFeedback('');
+
+    const qLow = q.toLowerCase();
+    if (
+      qLow.startsWith('mash-sv4') ||
+      qLow.startsWith('http://') ||
+      qLow.startsWith('https://') ||
+      qLow.includes('127.0.0.1') ||
+      qLow.includes(':3080')
+    ) {
+      setFriendError(
+        'Ne colle pas un Token ou une IP ici ! Entre juste le pseudo (ex: v0dka) ou le Peer ID (p2p-mash-...) de ton ami.'
+      );
+      return;
+    }
+
     const res = await fetch('/api/friends/add', {
       method: 'POST',
       headers: authHeaders,
-      body: JSON.stringify({ query: friendQuery }),
+      body: JSON.stringify({ query: q, globalOnly: true }),
     });
-    const data = await res.json();
-    if (data.ok) {
-      setFriendQuery('');
-      setFriendFeedback(`✓ ${data.friend.displayName} ajouté en P2P !`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setFriendError(data.error || 'Impossible d’envoyer la demande.');
+      return;
+    }
+
+    // Broadcast encrypted friend request over global P2P mesh
+    await globalMeshRef.current?.sendFriendRequest(q);
+    if (q.includes('#')) {
+      const basePseudo = q.split('#')[0].trim();
+      if (basePseudo) await globalMeshRef.current?.sendFriendRequest(basePseudo);
+    }
+
+    setFriendQuery('');
+    setSentRequests((prev) => (prev.includes(q) ? prev : [q, ...prev]));
+
+    if (data.friend && !data.pendingGlobal) {
+      setFriendFeedback(`✓ Conversation ouverte avec ${data.friend.displayName} !`);
       await fetchWorkspace();
       setSelectedServerId('dms');
       setSelectedChannelId(data.dmChannelId);
-      setTimeout(() => setFriendFeedback(''), 2500);
     } else {
-      setFriendFeedback(data.error || 'Erreur');
+      setFriendFeedback(`✓ Demande d'ami envoyée sur Internet à "${q}" ! En attente d'acceptation.`);
     }
+    setTimeout(() => setFriendFeedback(''), 4500);
   };
 
   const activeGameTitle =
@@ -682,6 +1094,7 @@ export default function DesktopApp({
             type="button"
             id="rail-dms-btn"
             className={`rail-btn ${selectedServerId === 'dms' ? 'active' : ''}`}
+            style={{ position: 'relative' }}
             title="Messages Privés & Amis P2P"
             onClick={() => {
               setSelectedServerId('dms');
@@ -691,6 +1104,28 @@ export default function DesktopApp({
             }}
           >
             <MessageSquare size={20} />
+            {incomingRequests.length > 0 && (
+              <span
+                style={{
+                  position: 'absolute',
+                  top: -2,
+                  right: -2,
+                  minWidth: 18,
+                  height: 18,
+                  borderRadius: 99,
+                  background: '#e25555',
+                  color: '#fff',
+                  fontSize: 10,
+                  fontWeight: 800,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '0 4px',
+                }}
+              >
+                {incomingRequests.length}
+              </span>
+            )}
           </button>
 
           <div className="rail-divider" />
@@ -744,49 +1179,57 @@ export default function DesktopApp({
                     marginBottom: 4,
                   }}
                 >
-                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--gold-bright)', letterSpacing: '0.04em' }}>
-                    INVITER UN AMI SUR MON NOEUD P2P
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.35 }}>
-                    1. Crée un <strong>Token Ami</strong> dans Sécurité.<br />
-                    2. Envoie-lui ton IP Hôte (LAN / Radmin / Tailscale / Port 3080) :
-                  </div>
-                  <div style={{ display: 'flex', gap: 5 }}>
-                    <button
-                      type="button"
-                      className="btn-chip"
-                      style={{ flex: 1, justifyContent: 'center', fontSize: 11 }}
-                      title="Copier mon adresse Hôte P2P"
-                      onClick={() => {
-                        const hostAddr = `${workspace.lanIp || '127.0.0.1'}:3080`;
-                        navigator.clipboard?.writeText(hostAddr);
-                        setFriendFeedback(`✓ Adresse Hôte copiée : ${hostAddr}`);
-                        setTimeout(() => setFriendFeedback(''), 2600);
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      color: 'var(--gold-bright)',
+                      letterSpacing: '0.03em',
+                    }}
+                  >
+                    <span>TON PROFIL AMI P2P</span>
+                    <span
+                      style={{
+                        color: meshStatus.online ? 'var(--emerald)' : 'var(--text-muted)',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 10,
                       }}
                     >
-                      <Copy size={12} /> {workspace.lanIp || '127.0.0.1'}:3080
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-chip"
-                      style={{ fontSize: 11 }}
-                      title="Générer un Token de connexion MASH-SV4 pour un ami"
-                      onClick={() => setShowSettings(true)}
-                    >
-                      <KeyRound size={12} /> Token
-                    </button>
+                      {meshStatus.online ? '● Internet OK' : '○ Connexion...'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.35 }}>
+                    Envoie ton <strong>Pseudo</strong> à ton pote (aucune IP ni ouverture de port requise) :
                   </div>
                   <button
                     type="button"
                     className="btn-chip"
-                    style={{ justifyContent: 'center', fontSize: 10.5 }}
+                    style={{ justifyContent: 'center', fontSize: 11 }}
                     onClick={() => {
-                      navigator.clipboard?.writeText(me?.peerId || me?.username || '');
-                      setFriendFeedback(`✓ Ton Peer ID copié : ${me?.peerId || me?.username}`);
+                      const tagStr = `${me?.username}#${me?.tag || '0001'}`;
+                      navigator.clipboard?.writeText(tagStr);
+                      setFriendError('');
+                      setFriendFeedback(`✓ Pseudo copié : ${tagStr}`);
                       setTimeout(() => setFriendFeedback(''), 2600);
                     }}
                   >
-                    <Copy size={11} /> Mon ID : {me?.username}#{me?.tag || '0001'}
+                    <Copy size={12} /> {me?.username}#{me?.tag || '0001'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-chip"
+                    style={{ justifyContent: 'center', fontSize: 10, opacity: 0.85 }}
+                    onClick={() => {
+                      navigator.clipboard?.writeText(me?.peerId || '');
+                      setFriendError('');
+                      setFriendFeedback(`✓ Peer ID copié : ${me?.peerId}`);
+                      setTimeout(() => setFriendFeedback(''), 2600);
+                    }}
+                  >
+                    <Copy size={11} /> {me?.peerId}
                   </button>
                 </div>
 
@@ -796,28 +1239,109 @@ export default function DesktopApp({
                     <input
                       className="mash-input"
                       style={{ padding: '7px 10px', fontSize: 12 }}
-                      placeholder="ex: lucas ou p2p-mash-..."
+                      placeholder="ex: v0dka ou v0dka#4921"
                       value={friendQuery}
                       onChange={(e) => setFriendQuery(e.target.value)}
                     />
-                    <button type="submit" className="btn-chip" title="Ajouter">
+                    <button type="submit" className="btn-chip" title="Envoyer une demande d'ami P2P">
                       <UserPlus size={14} />
                     </button>
                   </div>
                   {friendFeedback && (
-                    <div style={{ fontSize: 11, color: 'var(--emerald)' }}>{friendFeedback}</div>
+                    <div style={{ fontSize: 11, color: 'var(--emerald)', lineHeight: 1.35 }}>
+                      {friendFeedback}
+                    </div>
+                  )}
+                  {friendError && (
+                    <div style={{ fontSize: 11, color: '#ff8e8e', lineHeight: 1.35 }}>
+                      {friendError}
+                    </div>
                   )}
                 </form>
+
+                {incomingRequests.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div className="cat-header" style={{ color: 'var(--gold-bright)' }}>
+                      DEMANDES D&apos;AMIS REÇUES ({incomingRequests.length})
+                    </div>
+                    {incomingRequests.map((req) => (
+                      <div
+                        key={req.peerId || req.id}
+                        style={{
+                          padding: '8px 10px',
+                          borderRadius: 9,
+                          background: 'rgba(72, 199, 142, 0.1)',
+                          border: '1px solid rgba(72, 199, 142, 0.35)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                        }}
+                      >
+                        <div style={{ minWidth: 0 }}>
+                          <div
+                            style={{
+                              fontWeight: 700,
+                              fontSize: 12.5,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {req.displayName}
+                          </div>
+                          <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                            @{req.username}#{req.tag}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                          <button
+                            type="button"
+                            className="btn-chip"
+                            style={{
+                              padding: '4px 8px',
+                              fontSize: 11,
+                              color: '#48c78e',
+                              borderColor: 'rgba(72, 199, 142, 0.5)',
+                            }}
+                            onClick={() => handleAcceptFriendRequest(req)}
+                            title="Accepter la demande d'ami"
+                          >
+                            <UserCheck size={13} /> Accepter
+                          </button>
+                          <button
+                            type="button"
+                            className="win-btn"
+                            onClick={() => handleDeclineFriendRequest(req)}
+                            title="Ignorer"
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 <div>
                   <div className="cat-header">CONVERSATIONS DIRECTES ({workspace.dmChannels.length})</div>
                   <div className="channel-list" style={{ marginTop: 6 }}>
+                    {workspace.dmChannels.length === 0 && (
+                      <div style={{ fontSize: 11.5, color: 'var(--text-muted)', padding: '6px 4px' }}>
+                        Tape le pseudo de ton ami ci-dessus pour lui envoyer une demande P2P !
+                      </div>
+                    )}
                     {workspace.dmChannels.map(({ id, peer }) => (
-                      <button
+                      <div
                         key={id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         className={`channel-item ${selectedChannelId === id ? 'active' : ''}`}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
                         onClick={() => setSelectedChannelId(id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') setSelectedChannelId(id);
+                        }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
                           <div
@@ -827,19 +1351,39 @@ export default function DesktopApp({
                               height: 28,
                               fontSize: 11,
                               background: peer.avatarColor || '#e8a849',
+                              flexShrink: 0,
                             }}
                           >
                             {peer.displayName[0]?.toUpperCase()}
                             <span className={`presence-dot ${peer.status || 'online'}`} />
                           </div>
                           <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            <div>{peer.displayName}</div>
-                            <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                            <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {peer.displayName}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: 10.5,
+                                color: 'var(--text-muted)',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
                               {peer.activity ? `🎮 ${peer.activity.name}` : peer.customStatus || 'En ligne'}
                             </div>
                           </div>
                         </div>
-                      </button>
+                        <button
+                          type="button"
+                          className="win-btn"
+                          style={{ opacity: 0.55, flexShrink: 0 }}
+                          title={`Retirer ${peer.displayName}`}
+                          onClick={(e) => handleRemoveFriend(e, peer.id)}
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -1096,11 +1640,22 @@ export default function DesktopApp({
           <header className="stage-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
               {selectedServerId === 'dms' ? (
-                <MessageSquare size={18} color="#f5c26b" />
+                <MessageSquare size={18} color="#f5c26b" style={{ flexShrink: 0 }} />
               ) : (
-                <Hash size={18} color="#f5c26b" />
+                <Hash size={18} color="#f5c26b" style={{ flexShrink: 0 }} />
               )}
-              <strong style={{ fontSize: 15 }}>{currentChannelTitle}</strong>
+              <strong
+                style={{
+                  fontSize: 15,
+                  maxWidth: 280,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                }}
+              >
+                {currentChannelTitle}
+              </strong>
               <span
                 style={{
                   fontSize: 12,
@@ -1114,23 +1669,110 @@ export default function DesktopApp({
               </span>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
               {activeDmPeer && (
-                <>
-                  <button
-                    type="button"
-                    className="btn-chip"
-                    onClick={() =>
-                      joinVoiceChannel(selectedChannelId, `Appel Privé @${activeDmPeer.displayName}`)
-                    }
-                  >
-                    <PhoneCall size={13} style={{ marginRight: 5, verticalAlign: -2 }} />
-                    Appeler en P2P
-                  </button>
-                </>
+                <button
+                  type="button"
+                  className="btn-chip"
+                  onClick={() =>
+                    joinVoiceChannel(
+                      selectedChannelId,
+                      `Appel Privé @${activeDmPeer.displayName}`,
+                      activeDmPeer
+                    )
+                  }
+                >
+                  <PhoneCall size={13} style={{ marginRight: 5, verticalAlign: -2 }} />
+                  Appeler en P2P
+                </button>
               )}
             </div>
           </header>
+
+          {/* Global Friend Request Notification Banner (visible from any server tab) */}
+          {selectedServerId !== 'dms' && incomingRequests.length > 0 && (
+            <div
+              style={{
+                margin: '10px 16px 0',
+                padding: '10px 14px',
+                borderRadius: 10,
+                background: 'rgba(72, 199, 142, 0.12)',
+                border: '1px solid rgba(72, 199, 142, 0.4)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                zIndex: 4,
+              }}
+            >
+              <div style={{ fontSize: 12.5 }}>
+                🔔 <strong>{incomingRequests[0].displayName}</strong> (@
+                {incomingRequests[0].username}#{incomingRequests[0].tag}) t&apos;a envoyé une demande
+                d&apos;ami P2P !
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  className="btn-chip"
+                  style={{ color: '#48c78e', borderColor: 'rgba(72, 199, 142, 0.55)' }}
+                  onClick={() => handleAcceptFriendRequest(incomingRequests[0])}
+                >
+                  <UserCheck size={13} /> Accepter
+                </button>
+                <button
+                  type="button"
+                  className="btn-chip"
+                  onClick={() => handleDeclineFriendRequest(incomingRequests[0])}
+                >
+                  Ignorer
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Incoming P2P Call Ring Banner */}
+          {incomingCall && activeVoiceRoomId !== incomingCall.roomId && (
+            <div
+              style={{
+                margin: '10px 16px 0',
+                padding: '10px 14px',
+                borderRadius: 10,
+                background: 'rgba(232, 168, 73, 0.14)',
+                border: '1px solid var(--gold-primary)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                zIndex: 4,
+              }}
+            >
+              <div style={{ fontSize: 12.5 }}>
+                📞 Appel P2P entrant de <strong>{incomingCall.from?.displayName}</strong> !
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  className="btn-gold-cta"
+                  style={{ padding: '6px 12px', fontSize: 12 }}
+                  onClick={() =>
+                    joinVoiceChannel(
+                      incomingCall.roomId,
+                      `Appel Privé @${incomingCall.from?.displayName || 'Ami'}`
+                    )
+                  }
+                >
+                  <PhoneCall size={13} /> Rejoindre l&apos;appel
+                </button>
+                <button
+                  type="button"
+                  className="btn-chip"
+                  onClick={() => setIncomingCall(null)}
+                >
+                  Ignorer
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Active P2P Voice / Camera / Game Stream Matrix */}
           {activeVoiceRoomId && (
@@ -1486,6 +2128,7 @@ export default function DesktopApp({
           server={currentServer}
           usersMap={usersMap}
           sessionToken={sessionToken}
+          onJoinRemoteServer={(code) => globalMeshRef.current?.requestJoinServerByInvite(code)}
           onServerChange={(srv, switchNow, newCh) => {
             setWorkspace((prev) => {
               const exists = prev.servers.some((s) => s.id === srv.id);
