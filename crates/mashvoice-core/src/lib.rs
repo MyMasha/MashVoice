@@ -1,4 +1,5 @@
 pub mod hardware;
+pub mod relay;
 pub mod security;
 pub mod store;
 pub mod updater;
