@@ -33,6 +33,7 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/icon.icns",
       "icons/icon.ico"
     ]
   },
@@ -41,7 +42,7 @@
       "endpoints": [
         "https://github.com/MyMasha/MashVoice/releases/latest/download/latest.json"
       ],
-      "pubkey": ""
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY2QTlGMEZCRjkxRDdBREUKUldUZWVoMzUrL0NwOWhsN3BvdElrZXdNMk1pVEt2ZWxIaWJ2SEJRYkRUbzRxTVVZeEVkRW5uSjAK"
     }
   }
 }

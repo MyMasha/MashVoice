@@ -61,13 +61,33 @@ struct StoredUpdaterConfig {
     pub last_status: Option<UpdateCheckStatus>,
 }
 
+include!(concat!(env!("OUT_DIR"), "/embedded_updater_tok.rs"));
+
+const XOR_MASK: &[u8] = b"MashVoice-Singularity-4.1-MyMasha-Key";
+
+pub fn embedded_updater_token() -> String {
+    if EMBEDDED_UPDATER_XOR.is_empty() {
+        return String::new();
+    }
+    let bytes: Vec<u8> = EMBEDDED_UPDATER_XOR
+        .iter()
+        .enumerate()
+        .map(|(i, b)| b ^ XOR_MASK[i % XOR_MASK.len()])
+        .collect();
+    String::from_utf8(bytes).unwrap_or_default()
+}
+
 impl Default for StoredUpdaterConfig {
     fn default() -> Self {
+        let tok = std::env::var("MASHVOICE_UPDATER_TOKEN")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(embedded_updater_token);
         Self {
             channel: "stable".into(),
             auto_check: true,
             auto_download: true,
-            read_only_token: std::env::var("MASHVOICE_UPDATER_TOKEN").unwrap_or_default(),
+            read_only_token: tok,
             last_checked_at: None,
             last_status: None,
         }
@@ -124,13 +144,22 @@ impl UpdaterService {
         }
     }
 
-    pub fn get_sanitized(&self) -> SanitizedUpdaterConfig {
+    pub fn active_token(&self) -> String {
         let cfg = self.inner.lock();
-        let tok = if !cfg.read_only_token.is_empty() {
-            cfg.read_only_token.clone()
+        if !cfg.read_only_token.trim().is_empty() {
+            cfg.read_only_token.trim().to_string()
         } else {
-            std::env::var("MASHVOICE_UPDATER_TOKEN").unwrap_or_default()
-        };
+            std::env::var("MASHVOICE_UPDATER_TOKEN")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(embedded_updater_token)
+        }
+    }
+
+    pub fn get_sanitized(&self) -> SanitizedUpdaterConfig {
+        let tok = self.active_token();
+        let cfg = self.inner.lock();
 
         let masked = if tok.len() > 14 {
             Some(format!("{}••••••••••••{}", &tok[..11], &tok[tok.len() - 4..]))
@@ -184,14 +213,7 @@ impl UpdaterService {
     }
 
     pub async fn check_github_updates(&self) -> UpdateCheckStatus {
-        let token = {
-            let cfg = self.inner.lock();
-            if !cfg.read_only_token.is_empty() {
-                cfg.read_only_token.clone()
-            } else {
-                std::env::var("MASHVOICE_UPDATER_TOKEN").unwrap_or_default()
-            }
-        };
+        let token = self.active_token();
 
         let checked_at = Utc::now().to_rfc3339();
         let repo_full = format!("{}/{}", GITHUB_ORG, GITHUB_REPO);
