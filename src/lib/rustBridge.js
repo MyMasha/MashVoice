@@ -66,9 +66,10 @@ export function installRustBridge() {
       let target = String(url);
       const curWs = resolveWsOrigin();
       const isLocalWs =
-        target.startsWith('/ws') ||
-        target.includes('tauri.localhost/ws') ||
-        (window.location?.host && target.includes(`${window.location.host}/ws`));
+        !target.includes('/ws-p2p') &&
+        (target.startsWith('/ws') ||
+          target.includes('tauri.localhost/ws') ||
+          (window.location?.host && target.includes(`${window.location.host}/ws`)));
       if (isLocalWs) {
         const idx = target.indexOf('/ws');
         if (idx !== -1) {

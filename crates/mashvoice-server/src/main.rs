@@ -67,12 +67,17 @@ fn main() {
             .unwrap_or(3080);
 
         let dist_dir = cwd.join("dist");
-        let (router, _state) = build_router(&data_dir, Some(dist_dir));
+        let (router, state) = build_router(&data_dir, Some(dist_dir));
 
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .expect("Failed to bind MashVoice Rust server port");
+        if let Ok(local) = listener.local_addr() {
+            state.set_listen_port(local.port());
+        } else {
+            state.set_listen_port(port);
+        }
 
         println!(
             "[MashVoice Singularity 4.1 • Rust] Serveur P2P & Gatekeeper actif sur http://localhost:{} ({} threads Tokio)",

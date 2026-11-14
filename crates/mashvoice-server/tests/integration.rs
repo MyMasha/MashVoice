@@ -8,9 +8,10 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 async fn spawn_test_server() -> (String, String, std::path::PathBuf) {
     let tmp_dir =
         std::env::temp_dir().join(format!("mashvoice-int-test-{}", uuid::Uuid::new_v4()));
-    let (router, _st) = build_router(&tmp_dir, None);
+    let (router, st) = build_router(&tmp_dir, None);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
+    st.set_listen_port(port);
 
     tokio::spawn(async move {
         axum::serve(
@@ -410,3 +411,190 @@ async fn global_p2p_peer_sync_and_friend_input_validation() {
 
     let _ = std::fs::remove_dir_all(tmp_dir);
 }
+
+#[tokio::test]
+async fn direct_ip_p2p_friend_request_accept_and_dm_between_two_pcs() {
+    let (base_a, ws_url_a, tmp_a) = spawn_test_server().await;
+    let (base_b, ws_url_b, tmp_b) = spawn_test_server().await;
+    let port_a: u16 = base_a.rsplit(':').next().unwrap().parse().unwrap();
+    let port_b: u16 = base_b.rsplit(':').next().unwrap().parse().unwrap();
+
+    let client = reqwest::Client::new();
+
+    // Log in rawsq on PC A
+    let boot_a: Value = client
+        .get(format!("{}/api/bootstrap/public", base_a))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let tok_a = boot_a["starterTokens"][0]["token"].as_str().unwrap();
+    let login_a: Value = client
+        .post(format!("{}/api/auth/login", base_a))
+        .json(&json!({ "username": "rawsq", "connectionToken": tok_a }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let sess_a = login_a["sessionToken"].as_str().unwrap().to_string();
+    let user_a = login_a["user"].clone();
+
+    // Log in v0dka on PC B
+    let boot_b: Value = client
+        .get(format!("{}/api/bootstrap/public", base_b))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let tok_b = boot_b["starterTokens"][0]["token"].as_str().unwrap();
+    let login_b: Value = client
+        .post(format!("{}/api/auth/login", base_b))
+        .json(&json!({ "username": "v0dka", "connectionToken": tok_b }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let sess_b = login_b["sessionToken"].as_str().unwrap().to_string();
+    let user_b = login_b["user"].clone();
+
+    // Connect UI WebSockets on both PC A and PC B
+    let (mut ws_a, _) = connect_async(format!("{}?token={}", ws_url_a, sess_a))
+        .await
+        .unwrap();
+    let (mut ws_b, _) = connect_async(format!("{}?token={}", ws_url_b, sess_b))
+        .await
+        .unwrap();
+    let _ = ws_a.next().await; // ws:ready
+    let _ = ws_b.next().await; // ws:ready
+
+    // Self-connection guard: typing bare 127.0.0.1 or own port must return 400
+    let self_err = client
+        .post(format!("{}/api/p2p/connect-ip", base_a))
+        .bearer_auth(&sess_a)
+        .json(&json!({ "address": "127.0.0.1" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(self_err.status().as_u16(), 400);
+
+    let self_port_err = client
+        .post(format!("{}/api/p2p/connect-ip", base_a))
+        .bearer_auth(&sess_a)
+        .json(&json!({ "address": format!("127.0.0.1:{}", port_a) }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(self_port_err.status().as_u16(), 400);
+
+    // PC A (rawsq) adds PC B (v0dka) directly by IP:port!
+    let connect_res = client
+        .post(format!("{}/api/p2p/connect-ip", base_a))
+        .bearer_auth(&sess_a)
+        .json(&json!({ "address": format!("127.0.0.1:{}", port_b) }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(connect_res.status().as_u16(), 200);
+
+    // Verify PC B (v0dka) receives p2p:direct_event -> friend:request from rawsq
+    let mut got_req = false;
+    for _ in 0..8 {
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(3), ws_b.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let ev: Value = serde_json::from_str(&frame.into_text().unwrap()).unwrap();
+        if ev["type"] == "p2p:direct_event" && ev["data"]["type"] == "friend:request" {
+            assert_eq!(ev["data"]["from"]["username"], "rawsq");
+            got_req = true;
+            break;
+        }
+    }
+    assert!(got_req, "PC B must receive friend:request over Direct IP tunnel");
+
+    // PC B (v0dka) accepts friend request & sends a DM back over the SAME open tunnel!
+    let accept_send: Value = client
+        .post(format!("{}/api/p2p/tunnel-send", base_b))
+        .bearer_auth(&sess_b)
+        .json(&json!({
+            "targetPeerId": user_a["peerId"],
+            "payload": {
+                "type": "friend:accept",
+                "from": user_b
+            }
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(accept_send["ok"], true);
+    assert!(accept_send["deliveredTunnels"].as_u64().unwrap() >= 1);
+
+    let dm_send: Value = client
+        .post(format!("{}/api/p2p/tunnel-send", base_b))
+        .bearer_auth(&sess_b)
+        .json(&json!({
+            "targetPeerId": user_a["peerId"],
+            "payload": {
+                "type": "dm:message",
+                "from": user_b,
+                "message": {
+                    "id": "msg-ip-direct-1",
+                    "authorId": user_b["id"],
+                    "content": "Yo rawsq ! Connecté direct par IP !",
+                    "createdAt": "2026-11-14T18:00:00Z"
+                }
+            }
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(dm_send["ok"], true);
+
+    // Verify PC A (rawsq) receives both friend:accept and dm:message from v0dka!
+    let mut got_accept = false;
+    let mut got_dm = false;
+    for _ in 0..10 {
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(3), ws_a.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let ev: Value = serde_json::from_str(&frame.into_text().unwrap()).unwrap();
+        if ev["type"] == "p2p:direct_event" {
+            if ev["data"]["type"] == "friend:accept" {
+                assert_eq!(ev["data"]["from"]["username"], "v0dka");
+                got_accept = true;
+            } else if ev["data"]["type"] == "dm:message" {
+                assert_eq!(
+                    ev["data"]["message"]["content"],
+                    "Yo rawsq ! Connecté direct par IP !"
+                );
+                got_dm = true;
+            }
+        }
+        if got_accept && got_dm {
+            break;
+        }
+    }
+    assert!(got_accept, "PC A must receive friend:accept over Direct IP tunnel");
+    assert!(got_dm, "PC A must receive dm:message over Direct IP tunnel");
+
+    let _ = std::fs::remove_dir_all(tmp_a);
+    let _ = std::fs::remove_dir_all(tmp_b);
+}
+

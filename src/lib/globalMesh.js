@@ -43,7 +43,7 @@ function buildConnectPacket(clientId) {
     0x00, 0x04, 0x4d, 0x51, 0x54, 0x54, // "MQTT"
     0x04, // Protocol Level 4 (MQTT 3.1.1)
     0x02, // Clean Session
-    0x00, 0x1e, // KeepAlive 30s
+    0x00, 0x3c, // KeepAlive 60s
   ];
   const payload = encodeUtf8Field(clientId);
   const rem = varHeader.length + payload.length;
@@ -51,7 +51,8 @@ function buildConnectPacket(clientId) {
 }
 
 function buildSubscribePacket(packetId, topics) {
-  const varHeader = [(packetId >> 8) & 0xff, packetId & 0xff];
+  const safeId = ((packetId - 1) % 65000) + 1;
+  const varHeader = [(safeId >> 8) & 0xff, safeId & 0xff];
   const payload = [];
   for (const t of topics) {
     payload.push(...encodeUtf8Field(t), 0x00); // QoS 0
@@ -157,11 +158,23 @@ async function decryptEnvelope(rawText) {
   return JSON.parse(dec.decode(new Uint8Array(plainBuf)));
 }
 
-function normTopicKey(s) {
+// IMPORTANT: Never allow '#' or '+' in MQTT topics (they are MQTT wildcards and cause brokers to drop the socket!)
+export function normTopicKey(s) {
   return String(s || '')
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9_#.-]/g, '');
+    .replace(/#/g, '-tag-')
+    .replace(/:/g, '-')
+    .replace(/[^a-z0-9_.-]/g, '');
+}
+
+export function extractCleanIp(raw) {
+  const s = String(raw || '')
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/^wss?:\/\//i, '')
+    .split('/')[0];
+  return s.split(':')[0].trim();
 }
 
 export class GlobalP2PMesh {
@@ -193,12 +206,13 @@ export class GlobalP2PMesh {
     const u = normTopicKey(me.username);
     const d = normTopicKey(me.displayName);
     const tag = String(me.tag || '').trim();
+    const uTag = normTopicKey(`${me.username}#${tag}`);
     const pid = normTopicKey(me.peerId);
     const uid = normTopicKey(me.id);
 
     const list = [
       `mashvoice/v4/inbox/${u}`,
-      `mashvoice/v4/inbox/${u}#${tag}`,
+      `mashvoice/v4/inbox/${uTag}`,
       `mashvoice/v4/inbox/${pid}`,
       `mashvoice/v4/uid/${uid}`,
       `mashvoice/v4/signal/${pid}`,
@@ -206,24 +220,35 @@ export class GlobalP2PMesh {
     ];
     if (d && d !== u) {
       list.push(`mashvoice/v4/inbox/${d}`);
-      list.push(`mashvoice/v4/inbox/${d}#${tag}`);
+      list.push(`mashvoice/v4/inbox/${normTopicKey(`${me.displayName}#${tag}`)}`);
     }
     this.subscribeTopics(list);
+  }
+
+  registerIpTopics(ips = []) {
+    const topics = [];
+    for (const rawIp of ips) {
+      const ip = normTopicKey(extractCleanIp(rawIp));
+      if (ip && ip !== '127.0.0.1' && ip !== 'localhost') {
+        topics.push(`mashvoice/v4/ip/${ip}`);
+      }
+    }
+    this.subscribeTopics(topics);
   }
 
   subscribeServer(server) {
     if (!server) return;
     const topics = [];
-    if (server.id) topics.push(`mashvoice/v4/srv/${server.id}`);
+    if (server.id) topics.push(`mashvoice/v4/srv/${normTopicKey(server.id)}`);
     if (server.inviteCode) {
-      topics.push(`mashvoice/v4/invite/${String(server.inviteCode).trim().toUpperCase()}`);
+      topics.push(`mashvoice/v4/invite/${normTopicKey(server.inviteCode)}`);
     }
     this.subscribeTopics(topics);
   }
 
   subscribeRoom(roomId) {
     if (!roomId) return;
-    this.subscribeTopics([`mashvoice/v4/room/${roomId}`]);
+    this.subscribeTopics([`mashvoice/v4/room/${normTopicKey(roomId)}`]);
   }
 
   subscribeTopics(topics) {
@@ -259,7 +284,7 @@ export class GlobalP2PMesh {
     try {
       const ws = new WebSocket(url, ['mqtt']);
       ws.binaryType = 'arraybuffer';
-      const clientId = `mv4-${Math.random().toString(36).slice(2, 11)}`;
+      const clientId = `mv4${Math.random().toString(36).replace(/[^a-z0-9]/gi, '').slice(0, 14)}`;
       const entry = { ws, ready: false, url };
       this.sockets.set(url, entry);
 
@@ -386,6 +411,16 @@ export class GlobalP2PMesh {
     });
   }
 
+  async sendFriendRequestByIp(rawIp) {
+    if (!this.me) return 0;
+    const ip = normTopicKey(extractCleanIp(rawIp));
+    if (!ip || ip === '127.0.0.1' || ip === 'localhost') return 0;
+    return this.publish(`mashvoice/v4/ip/${ip}`, {
+      type: 'friend:request',
+      from: this.me,
+    });
+  }
+
   async sendFriendAccept(targetUser) {
     if (!this.me || !targetUser) return 0;
     const pid = normTopicKey(targetUser.peerId);
@@ -421,7 +456,7 @@ export class GlobalP2PMesh {
 
   async sendServerMessage(serverId, channelId, message) {
     if (!serverId) return;
-    await this.publish(`mashvoice/v4/srv/${serverId}`, {
+    await this.publish(`mashvoice/v4/srv/${normTopicKey(serverId)}`, {
       type: 'srv:message',
       from: this.me,
       serverId,
@@ -433,7 +468,7 @@ export class GlobalP2PMesh {
   async requestJoinServerByInvite(inviteCode) {
     if (!this.me || !inviteCode) return;
     const code = String(inviteCode).trim().toUpperCase();
-    await this.publish(`mashvoice/v4/invite/${code}`, {
+    await this.publish(`mashvoice/v4/invite/${normTopicKey(code)}`, {
       type: 'srv:join-request',
       inviteCode: code,
       from: this.me,
@@ -466,7 +501,7 @@ export class GlobalP2PMesh {
 
   async broadcastRoomEvent(roomId, eventType, extra = {}) {
     if (!roomId || !this.me) return;
-    await this.publish(`mashvoice/v4/room/${roomId}`, {
+    await this.publish(`mashvoice/v4/room/${normTopicKey(roomId)}`, {
       type: eventType,
       roomId,
       peerKey: this.me.peerId,

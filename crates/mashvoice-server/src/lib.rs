@@ -25,14 +25,19 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU16, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::Message as TungMessage;
 use tower_http::{
     cors::CorsLayer,
     services::{ServeDir, ServeFile},
 };
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +69,13 @@ struct ConnectedClient {
     tx: mpsc::UnboundedSender<String>,
 }
 
+#[derive(Clone)]
+struct PeerTunnelHandle {
+    peer_id: Option<String>,
+    address: String,
+    tx: mpsc::UnboundedSender<String>,
+}
+
 pub struct AppState {
     pub security: SecurityEngine,
     pub store: MashStore,
@@ -71,10 +83,13 @@ pub struct AppState {
     pub updater: UpdaterService,
     pub rate_limiter: LoginRateLimiter,
     pub qr_manager: QrChallengeManager,
+    listen_port: AtomicU16,
     clients: RwLock<HashMap<String, ConnectedClient>>,
     qr_watchers: RwLock<HashMap<String, Vec<mpsc::UnboundedSender<String>>>>,
     voice_rooms: RwLock<HashMap<String, HashMap<String, RoomPeerState>>>,
     raw_tokens_by_jti: RwLock<HashMap<String, String>>,
+    peer_tunnels: RwLock<HashMap<String, PeerTunnelHandle>>,
+    recent_tunnel_events: RwLock<Vec<Value>>,
 }
 
 impl AppState {
@@ -100,10 +115,13 @@ impl AppState {
             updater,
             rate_limiter: LoginRateLimiter::new(10, 60_000),
             qr_manager: QrChallengeManager::new(120_000),
+            listen_port: AtomicU16::new(3080),
             clients: RwLock::new(HashMap::new()),
             qr_watchers: RwLock::new(HashMap::new()),
             voice_rooms: RwLock::new(HashMap::new()),
             raw_tokens_by_jti: RwLock::new(raw_map),
+            peer_tunnels: RwLock::new(HashMap::new()),
+            recent_tunnel_events: RwLock::new(Vec::new()),
         });
 
         if tokio::runtime::Handle::try_current().is_ok() {
@@ -111,6 +129,88 @@ impl AppState {
         }
 
         state
+    }
+
+    pub fn set_listen_port(&self, port: u16) {
+        self.listen_port.store(port, Ordering::Relaxed);
+    }
+
+    pub fn listen_port(&self) -> u16 {
+        self.listen_port.load(Ordering::Relaxed)
+    }
+
+    fn local_owner_profile(&self) -> Option<UserProfile> {
+        if let Some(c) = self.clients.read().values().next() {
+            if let Some(u) = self.store.get_user_by_id(&c.user_id) {
+                return Some(u);
+            }
+        }
+        self.store.state.read().users.first().cloned()
+    }
+
+    fn active_tunnels_summary(&self) -> Vec<Value> {
+        self.peer_tunnels
+            .read()
+            .values()
+            .map(|h| {
+                json!({
+                    "address": h.address,
+                    "peerId": h.peer_id,
+                })
+            })
+            .collect()
+    }
+
+    fn broadcast_tunnels_update(&self) {
+        let list = self.active_tunnels_summary();
+        self.broadcast_all(&json!({ "type": "p2p:tunnels", "tunnels": list }), None);
+    }
+
+    fn handle_incoming_tunnel_frame(&self, conn_id: &str, frame: Value) {
+        let remote_pid = frame["senderPeerId"]
+            .as_str()
+            .or_else(|| frame["from"]["peerId"].as_str())
+            .or_else(|| frame["hostUser"]["peerId"].as_str())
+            .or_else(|| frame["peerKey"].as_str())
+            .map(|s| s.to_string());
+
+        if let Some(pid) = remote_pid {
+            let mut changed = false;
+            {
+                let mut guard = self.peer_tunnels.write();
+                if let Some(h) = guard.get_mut(conn_id) {
+                    if h.peer_id.as_deref() != Some(pid.as_str()) {
+                        h.peer_id = Some(pid);
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                self.broadcast_tunnels_update();
+            }
+        }
+
+        let ftype = frame["type"].as_str().unwrap_or("");
+        if ftype.is_empty() || ftype == "tunnel:hello" || ftype == "tunnel:ping" {
+            return;
+        }
+
+        {
+            let mut recent = self.recent_tunnel_events.write();
+            recent.push(frame.clone());
+            if recent.len() > 32 {
+                let overflow = recent.len() - 32;
+                recent.drain(0..overflow);
+            }
+        }
+
+        self.broadcast_all(
+            &json!({
+                "type": "p2p:direct_event",
+                "data": frame,
+            }),
+            None,
+        );
     }
 
     pub fn spawn_revocation_watchdog(self: &Arc<Self>) {
@@ -276,6 +376,8 @@ pub fn build_router(data_dir: &Path, dist_dir: Option<PathBuf>) -> (Router, Arc<
         .route("/p2p/sync-peer", post(api_p2p_sync_peer))
         .route("/p2p/sync-message", post(api_p2p_sync_message))
         .route("/p2p/sync-server", post(api_p2p_sync_server))
+        .route("/p2p/connect-ip", post(api_p2p_connect_ip))
+        .route("/p2p/tunnel-send", post(api_p2p_tunnel_send))
         .route("/messages/:channel_id", get(api_messages_get).post(api_messages_post))
         .route("/messages/:channel_id/:message_id/react", post(api_messages_react))
         .route("/servers", post(api_servers_create))
@@ -290,6 +392,7 @@ pub fn build_router(data_dir: &Path, dist_dir: Option<PathBuf>) -> (Router, Arc<
     let mut router = Router::new()
         .nest("/api", api)
         .route("/ws", get(ws_upgrade_handler))
+        .route("/ws-p2p", get(ws_p2p_upgrade_handler))
         .layer(CorsLayer::permissive())
         .with_state(Arc::clone(&state));
 
@@ -306,14 +409,33 @@ pub fn build_router(data_dir: &Path, dist_dir: Option<PathBuf>) -> (Router, Arc<
 
 // --- HANDLERS ---
 
+fn detect_local_ips() -> Vec<String> {
+    // Probe Radmin VPN (26.x), Tailscale (100.x), Hamachi (25.x), and default LAN gateway (1.1.1.1)
+    let probes = ["26.1.1.1:80", "100.100.100.100:80", "25.1.1.1:80", "1.1.1.1:80"];
+    let mut ips = Vec::new();
+    for target in probes {
+        if let Ok(sock) = std::net::UdpSocket::bind("0.0.0.0:0") {
+            if sock.connect(target).is_ok() {
+                if let Ok(addr) = sock.local_addr() {
+                    let ip = addr.ip();
+                    if !ip.is_loopback() && !ip.is_unspecified() {
+                        let s = ip.to_string();
+                        if !ips.contains(&s) {
+                            ips.push(s);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ips
+}
+
 fn detect_lan_ip() -> String {
-    std::net::UdpSocket::bind("0.0.0.0:0")
-        .and_then(|s| {
-            s.connect("1.1.1.1:80")?;
-            s.local_addr()
-        })
-        .map(|a| a.ip().to_string())
-        .unwrap_or_else(|_| "127.0.0.1".into())
+    detect_local_ips()
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "127.0.0.1".into())
 }
 
 async fn api_bootstrap_public(
@@ -350,6 +472,8 @@ async fn api_bootstrap_public(
         "prefilledGithubTokenUrl": PREFILLED_GITHUB_TOKEN_URL,
         "hostSpecs": st.hardware.host_specs(),
         "lanIp": detect_lan_ip(),
+        "localIps": detect_local_ips(),
+        "listenPort": st.listen_port(),
         "starterTokens": starter,
     }))
 }
@@ -788,6 +912,9 @@ async fn api_workspace_state(
     Ok(Json(json!({
         "me": me,
         "lanIp": detect_lan_ip(),
+        "localIps": detect_local_ips(),
+        "listenPort": st.listen_port(),
+        "activeTunnels": st.active_tunnels_summary(),
         "users": users,
         "friends": friends,
         "dmChannels": dm_channels,
@@ -839,22 +966,27 @@ async fn api_friends_add(
     if q.is_empty() {
         return Ok((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Entrez le pseudo (ex: v0dka) ou le Peer ID (p2p-mash-...) de ton ami." })),
+            Json(json!({ "error": "Entre l'IP de ton ami (ex: 26.48.12.90:3080) ou son pseudo (ex: v0dka)." })),
         )
             .into_response());
     }
 
     let q_low = q.to_lowercase();
-    if q_low.starts_with("mash-sv4")
-        || q_low.starts_with("http://")
-        || q_low.starts_with("https://")
-        || q_low.contains("127.0.0.1")
-        || q_low.contains(":3080")
-    {
+    if q_low.starts_with("mash-sv4") {
         return Ok((
             StatusCode::BAD_REQUEST,
             Json(json!({
-                "error": "Ceci est un Token ou une IP ! Entre uniquement le pseudo (ex: v0dka#1234) ou le Peer ID (p2p-mash-...) de ton ami."
+                "error": "Ceci est un Token de sécurité MASH-SV4 ! Entre l'IP de ton ami (ex: 26.x.x.x:3080) ou son pseudo."
+            })),
+        )
+            .into_response());
+    }
+
+    if q_low.starts_with("127.0.0.1") || q_low.starts_with("localhost") {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "127.0.0.1 est ton propre PC ! Entre l'IP du PC de ton ami."
             })),
         )
             .into_response());
@@ -1003,6 +1135,308 @@ async fn api_p2p_sync_server(
     let saved = st.store.upsert_synced_server(srv, &me.id, host);
     st.broadcast_all(&json!({ "type": "server:updated", "server": saved }), None);
     Ok(Json(json!({ "ok": true, "server": saved })).into_response())
+}
+
+fn parse_peer_address(raw: &str) -> Result<(String, u16, String, bool), String> {
+    let mut cleaned = raw.trim();
+    for prefix in ["ws://", "wss://", "http://", "https://"] {
+        if let Some(rest) = cleaned.strip_prefix(prefix) {
+            cleaned = rest;
+            break;
+        }
+    }
+    if let Some((before_slash, _)) = cleaned.split_once('/') {
+        cleaned = before_slash.trim();
+    }
+    if cleaned.is_empty() {
+        return Err("Adresse IP vide.".into());
+    }
+
+    let mut explicit_port = false;
+    let (host, port) = if let Some((h, p)) = cleaned.rsplit_once(':') {
+        let parsed = p
+            .trim()
+            .parse::<u16>()
+            .map_err(|_| "Port invalide (ex: 3080).".to_string())?;
+        if parsed == 0 {
+            return Err("Port invalide (ex: 3080).".into());
+        }
+        explicit_port = true;
+        (h.trim().to_string(), parsed)
+    } else {
+        (cleaned.to_string(), 3080u16)
+    };
+
+    if host.is_empty() || host.contains(' ') {
+        return Err("Adresse IP invalide.".into());
+    }
+
+    let normalized = format!("{}:{}", host, port);
+    Ok((host, port, normalized, explicit_port))
+}
+
+async fn api_p2p_connect_ip(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let (_sess, me) = st.extract_auth(&headers)?;
+    let raw_addr = body["address"].as_str().unwrap_or("").trim();
+
+    let (host, port, normalized_addr, explicit_port) = match parse_peer_address(raw_addr) {
+        Ok(v) => v,
+        Err(msg) => {
+            return Ok((StatusCode::BAD_REQUEST, Json(json!({ "error": msg }))).into_response());
+        }
+    };
+
+    let self_port = st.listen_port();
+    let is_loopback =
+        host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost") || host == "0.0.0.0";
+    if is_loopback && (!explicit_port || port == self_port) {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "127.0.0.1 est l'adresse de ton propre PC ! Entre l'IP du PC de ton ami (Radmin VPN 26.x.x.x, Tailscale 100.x.x.x, LAN 192.168.x.x ou IP publique :3080)."
+            })),
+        )
+            .into_response());
+    }
+
+    if detect_local_ips().iter().any(|ip| ip == &host) && port == self_port {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": format!("{} est ta propre adresse IP ! Entre l'IP du PC de ton ami.", host)
+            })),
+        )
+            .into_response());
+    }
+
+    let req_packet = json!({
+        "type": "friend:request",
+        "from": me,
+        "senderPeerId": me.peer_id,
+        "msgId": Uuid::new_v4().to_string(),
+        "ts": Utc::now().timestamp_millis(),
+    });
+
+    // Reuse an already-open tunnel to this exact IP:port if alive
+    let existing_reused = {
+        let mut dead_keys = Vec::new();
+        let mut reused_peer: Option<Option<String>> = None;
+        {
+            let guard = st.peer_tunnels.read();
+            for (cid, h) in guard.iter() {
+                if h.address == normalized_addr {
+                    if h.tx.send(req_packet.to_string()).is_ok() {
+                        reused_peer = Some(h.peer_id.clone());
+                        break;
+                    } else {
+                        dead_keys.push(cid.clone());
+                    }
+                }
+            }
+        }
+        if !dead_keys.is_empty() {
+            let mut w = st.peer_tunnels.write();
+            for k in dead_keys {
+                w.remove(&k);
+            }
+        }
+        reused_peer
+    };
+
+    if let Some(peer_id) = existing_reused {
+        return Ok(Json(json!({
+            "ok": true,
+            "address": normalized_addr,
+            "reused": true,
+            "peerId": peer_id,
+        }))
+        .into_response());
+    }
+
+    let ws_url = format!("ws://{}/ws-p2p", normalized_addr);
+    let connect_res =
+        tokio::time::timeout(Duration::from_secs(4), tokio_tungstenite::connect_async(&ws_url))
+            .await;
+
+    let ws_stream = match connect_res {
+        Ok(Ok((stream, _resp))) => stream,
+        _ => {
+            return Ok((
+                StatusCode::BAD_GATEWAY,
+                Json(json!({
+                    "ok": false,
+                    "address": normalized_addr,
+                    "error": format!(
+                        "Impossible de joindre {} en TCP direct (port fermé ou pare-feu). Vérifie que MashVoice est ouvert chez ton ami et utilisez son IP Radmin VPN / Tailscale / LAN (ou ouvrez le port TCP {}).",
+                        normalized_addr, port
+                    )
+                })),
+            )
+                .into_response());
+        }
+    };
+
+    let (mut ws_sink, mut ws_reader) = ws_stream.split();
+    let conn_id = format!("tun-{}", Uuid::new_v4());
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+
+    st.peer_tunnels.write().insert(
+        conn_id.clone(),
+        PeerTunnelHandle {
+            peer_id: None,
+            address: normalized_addr.clone(),
+            tx: tx.clone(),
+        },
+    );
+    st.broadcast_tunnels_update();
+
+    let hello_packet = json!({
+        "type": "tunnel:hello",
+        "port": self_port,
+        "senderPeerId": me.peer_id,
+        "hostUser": me,
+    });
+    let _ = tx.send(hello_packet.to_string());
+    let _ = tx.send(req_packet.to_string());
+
+    let writer_task = tokio::spawn(async move {
+        let mut ping_iv = tokio::time::interval(Duration::from_secs(20));
+        ping_iv.tick().await;
+        loop {
+            tokio::select! {
+                maybe_msg = rx.recv() => {
+                    let Some(msg) = maybe_msg else { break; };
+                    if ws_sink.send(TungMessage::Text(msg)).await.is_err() {
+                        break;
+                    }
+                }
+                _ = ping_iv.tick() => {
+                    if ws_sink
+                        .send(TungMessage::Text("{\"type\":\"tunnel:ping\"}".into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    let st_reader = Arc::clone(&st);
+    let cid_reader = conn_id.clone();
+    tokio::spawn(async move {
+        while let Some(Ok(frame)) = ws_reader.next().await {
+            if let TungMessage::Text(txt) = frame {
+                if let Ok(val) = serde_json::from_str::<Value>(&txt) {
+                    st_reader.handle_incoming_tunnel_frame(&cid_reader, val);
+                }
+            }
+        }
+        st_reader.peer_tunnels.write().remove(&cid_reader);
+        st_reader.broadcast_tunnels_update();
+        writer_task.abort();
+    });
+
+    Ok(Json(json!({
+        "ok": true,
+        "address": normalized_addr,
+        "connId": conn_id,
+    }))
+    .into_response())
+}
+
+async fn api_p2p_tunnel_send(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let (_sess, me) = st.extract_auth(&headers)?;
+    let target_peer_id = body["targetPeerId"]
+        .as_str()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+
+    let mut payload = body["payload"].clone();
+    if !payload.is_object() {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "payload JSON requis." })),
+        )
+            .into_response());
+    }
+
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("senderPeerId".into(), json!(me.peer_id));
+        if !obj.contains_key("msgId") {
+            obj.insert("msgId".into(), json!(Uuid::new_v4().to_string()));
+        }
+        if !obj.contains_key("ts") {
+            obj.insert("ts".into(), json!(Utc::now().timestamp_millis()));
+        }
+        if let Some(tpid) = target_peer_id {
+            obj.insert("targetPeerId".into(), json!(tpid));
+        }
+    }
+
+    let raw = payload.to_string();
+    let mut dead_keys = Vec::new();
+    let mut delivered = 0usize;
+
+    {
+        let guard = st.peer_tunnels.read();
+        if let Some(tpid) = target_peer_id {
+            for (cid, h) in guard.iter() {
+                if h.peer_id.as_deref() == Some(tpid) {
+                    if h.tx.send(raw.clone()).is_ok() {
+                        delivered += 1;
+                    } else {
+                        dead_keys.push(cid.clone());
+                    }
+                }
+            }
+            // Fallback if tunnel hasn't finished exchanging peer_id yet
+            if delivered == 0 {
+                for (cid, h) in guard.iter() {
+                    if h.peer_id.is_none() || guard.len() == 1 {
+                        if h.tx.send(raw.clone()).is_ok() {
+                            delivered += 1;
+                        } else {
+                            dead_keys.push(cid.clone());
+                        }
+                    }
+                }
+            }
+        } else {
+            for (cid, h) in guard.iter() {
+                if h.tx.send(raw.clone()).is_ok() {
+                    delivered += 1;
+                } else {
+                    dead_keys.push(cid.clone());
+                }
+            }
+        }
+    }
+
+    if !dead_keys.is_empty() {
+        let mut w = st.peer_tunnels.write();
+        for k in dead_keys {
+            w.remove(&k);
+        }
+        drop(w);
+        st.broadcast_tunnels_update();
+    }
+
+    Ok(Json(json!({
+        "ok": true,
+        "deliveredTunnels": delivered,
+        "activeTunnels": st.peer_tunnels.read().len(),
+    }))
+    .into_response())
 }
 
 async fn api_messages_get(
@@ -1253,9 +1687,22 @@ async fn handle_ws_connection(socket: WebSocket, q: WsQuery, st: Arc<AppState>) 
             "type": "ws:ready",
             "peerKey": peer_key,
             "voiceRooms": st.serialize_voice_rooms(),
+            "activeTunnels": st.active_tunnels_summary(),
         })
         .to_string(),
     );
+
+    // Replay recent Direct IP tunnel events in case a friend sent a request while UI was unlocking
+    let buffered_events = st.recent_tunnel_events.read().clone();
+    for ev in buffered_events {
+        let _ = tx.send(
+            json!({
+                "type": "p2p:direct_event",
+                "data": ev,
+            })
+            .to_string(),
+        );
+    }
 
     let writer_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
@@ -1424,3 +1871,65 @@ async fn handle_ws_connection(socket: WebSocket, q: WsQuery, st: Arc<AppState>) 
     st.clients.write().remove(&peer_key);
     writer_task.abort();
 }
+
+// --- DIRECT IP P2P PEER-TO-PEER TUNNEL (/ws-p2p) ---
+
+async fn ws_p2p_upgrade_handler(
+    ws: WebSocketUpgrade,
+    addr: Option<ConnectInfo<SocketAddr>>,
+    State(st): State<Arc<AppState>>,
+) -> Response {
+    let remote_addr = addr
+        .map(|a| a.0.ip().to_string())
+        .unwrap_or_else(|| "direct-ip".into());
+    ws.on_upgrade(move |socket| handle_ws_p2p_peer(socket, remote_addr, st))
+}
+
+async fn handle_ws_p2p_peer(socket: WebSocket, remote_addr: String, st: Arc<AppState>) {
+    let (mut ws_sink, mut ws_stream) = socket.split();
+    let conn_id = format!("tun-{}", Uuid::new_v4());
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+
+    st.peer_tunnels.write().insert(
+        conn_id.clone(),
+        PeerTunnelHandle {
+            peer_id: None,
+            address: remote_addr,
+            tx: tx.clone(),
+        },
+    );
+    st.broadcast_tunnels_update();
+
+    if let Some(host) = st.local_owner_profile() {
+        let _ = tx.send(
+            json!({
+                "type": "tunnel:hello",
+                "port": st.listen_port(),
+                "senderPeerId": host.peer_id,
+                "hostUser": host,
+            })
+            .to_string(),
+        );
+    }
+
+    let writer_task = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if ws_sink.send(WsMessage::Text(msg.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    while let Some(Ok(frame)) = ws_stream.next().await {
+        if let WsMessage::Text(txt) = frame {
+            if let Ok(val) = serde_json::from_str::<Value>(&txt) {
+                st.handle_incoming_tunnel_frame(&conn_id, val);
+            }
+        }
+    }
+
+    st.peer_tunnels.write().remove(&conn_id);
+    st.broadcast_tunnels_update();
+    writer_task.abort();
+}
+

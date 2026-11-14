@@ -1,6 +1,6 @@
 {
   "name": "mashvoice",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "description": "MashVoice Singularity 4.1 — Logiciel P2P en Rust + Tauri v2 (Messages, Vocal, Stream 120 FPS, Serveurs, App Mobile & QR Auth)",

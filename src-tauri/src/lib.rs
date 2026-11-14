@@ -100,6 +100,7 @@ pub fn run() {
                 .or_else(|_| StdTcpListener::bind(("0.0.0.0", 0)))?;
             std_listener.set_nonblocking(true)?;
             let port = std_listener.local_addr().map(|a| a.port()).unwrap_or(3080);
+            app_state.set_listen_port(port);
 
             let endpoint = BackendEndpoint {
                 port,

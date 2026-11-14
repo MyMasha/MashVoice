@@ -78,7 +78,12 @@ export default function DesktopApp({
     dmChannels: [],
     servers: [],
     voiceRooms: {},
+    localIps: [],
+    listenPort: 3080,
+    activeTunnels: [],
   });
+  const [publicIp, setPublicIp] = useState('');
+  const [connectingIp, setConnectingIp] = useState(false);
 
   // Navigation state: 'dms' or serverId
   const [selectedServerId, setSelectedServerId] = useState('srv-singularity');
@@ -148,6 +153,8 @@ export default function DesktopApp({
   const wsRef = useRef(null);
   const p2pRef = useRef(null);
   const globalMeshRef = useRef(null);
+  const handleP2PEventRef = useRef(null);
+  const seenP2PIdsRef = useRef(new Set());
   const meRef = useRef(me);
   const workspaceRef = useRef(workspace);
   const activeVoiceRoomRef = useRef(activeVoiceRoomId);
@@ -166,6 +173,29 @@ export default function DesktopApp({
       globalMeshRef.current?.subscribeServer(srv);
     }
   }, [workspace]);
+
+  useEffect(() => {
+    fetch('https://api.ipify.org?format=json')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.ip) setPublicIp(String(d.ip).trim());
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const port = workspace.listenPort || 3080;
+    const candidates = [];
+    for (const ip of workspace.localIps || []) {
+      candidates.push(ip, `${ip}:${port}`);
+    }
+    if (publicIp) {
+      candidates.push(publicIp, `${publicIp}:${port}`);
+    }
+    if (candidates.length > 0) {
+      globalMeshRef.current?.registerIpTopics(candidates);
+    }
+  }, [workspace.localIps, workspace.listenPort, publicIp, meshStatus.online]);
 
   useEffect(() => {
     activeVoiceRoomRef.current = activeVoiceRoomId;
@@ -194,6 +224,21 @@ export default function DesktopApp({
     [sessionToken]
   );
 
+  const sendViaTunnel = async (targetPeerId, payload) => {
+    try {
+      await fetch('/api/p2p/tunnel-send', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          targetPeerId: targetPeerId || null,
+          payload,
+        }),
+      });
+    } catch {
+      // ignore
+    }
+  };
+
   const usersMap = useMemo(() => {
     const m = new Map();
     for (const u of workspace.users) m.set(u.id, u);
@@ -218,13 +263,16 @@ export default function DesktopApp({
       return;
     }
     const data = await res.json();
-    setWorkspace({
+    setWorkspace((prev) => ({
       users: data.users || [],
       friends: data.friends || [],
       dmChannels: data.dmChannels || [],
       servers: data.servers || [],
       voiceRooms: data.voiceRooms || {},
-    });
+      localIps: data.localIps || (data.lanIp ? [data.lanIp] : prev.localIps),
+      listenPort: data.listenPort || prev.listenPort || 3080,
+      activeTunnels: data.activeTunnels || prev.activeTunnels || [],
+    }));
     if (data.me) setMe(data.me);
   };
 
@@ -282,7 +330,13 @@ export default function DesktopApp({
       prev.filter((r) => r.peerId !== peerProfile.peerId && r.id !== peerProfile.id)
     );
     mashSounds.unlockGate();
-    await globalMeshRef.current?.sendFriendAccept(peerProfile);
+    await Promise.all([
+      globalMeshRef.current?.sendFriendAccept(peerProfile),
+      sendViaTunnel(peerProfile.peerId, {
+        type: 'friend:accept',
+        from: meRef.current,
+      }),
+    ]);
     await syncRemotePeer(peerProfile, true);
     setFriendError('');
     setFriendFeedback(`✓ ${peerProfile.displayName} est maintenant ton ami P2P !`);
@@ -309,238 +363,271 @@ export default function DesktopApp({
     }
   };
 
+  // Unified P2P Event Processor (shared by Direct IP Rust Tunnels AND Global Internet Mesh)
+  handleP2PEventRef.current = async (data) => {
+    const curMe = meRef.current;
+    if (!curMe || !data || typeof data !== 'object') return;
+    if (data.targetPeerId && data.targetPeerId !== curMe.peerId) return;
+
+    if (data.msgId) {
+      if (seenP2PIdsRef.current.has(data.msgId)) return;
+      seenP2PIdsRef.current.add(data.msgId);
+      if (seenP2PIdsRef.current.size > 600) {
+        const oldest = seenP2PIdsRef.current.values().next().value;
+        seenP2PIdsRef.current.delete(oldest);
+      }
+    }
+
+    switch (data.type) {
+      case 'friend:request': {
+        const from = data.from;
+        if (!from || from.peerId === curMe.peerId) return;
+        const alreadyFriend = workspaceRef.current.friends.some(
+          (f) => f.id === from.id || f.peerId === from.peerId
+        );
+        const weRequestedThem = sentRequestsRef.current.some((q) => {
+          const ql = q.toLowerCase();
+          return (
+            ql === from.username?.toLowerCase() ||
+            ql === from.peerId?.toLowerCase() ||
+            ql === `${from.username}#${from.tag}`.toLowerCase()
+          );
+        });
+
+        if (alreadyFriend || weRequestedThem) {
+          await Promise.all([
+            globalMeshRef.current?.sendFriendAccept(from),
+            sendViaTunnel(from.peerId, { type: 'friend:accept', from: curMe }),
+          ]);
+          await syncRemotePeer(from, weRequestedThem);
+          if (weRequestedThem) {
+            setSentRequests((prev) =>
+              prev.filter((q) => q.toLowerCase() !== from.username?.toLowerCase())
+            );
+            setFriendFeedback(`✓ Connexion P2P établie avec ${from.displayName} !`);
+            setTimeout(() => setFriendFeedback(''), 3500);
+          }
+          return;
+        }
+
+        mashSounds.messageTick();
+        setIncomingRequests((prev) => {
+          if (prev.some((r) => r.peerId === from.peerId || r.id === from.id)) return prev;
+          return [from, ...prev];
+        });
+        break;
+      }
+
+      case 'friend:accept': {
+        const from = data.from;
+        if (!from || from.peerId === curMe.peerId) return;
+        mashSounds.unlockGate();
+        setSentRequests((prev) =>
+          prev.filter((q) => {
+            const ql = q.toLowerCase();
+            return (
+              ql !== from.username?.toLowerCase() &&
+              ql !== from.peerId?.toLowerCase() &&
+              ql !== `${from.username}#${from.tag}`.toLowerCase()
+            );
+          })
+        );
+        await syncRemotePeer(from, true);
+        setFriendError('');
+        setFriendFeedback(`✓ ${from.displayName} a accepté ta demande d'ami !`);
+        setTimeout(() => setFriendFeedback(''), 4000);
+        break;
+      }
+
+      case 'dm:message': {
+        const from = data.from;
+        if (!from || !data.message || from.peerId === curMe.peerId) return;
+        const localFriend = workspaceRef.current.friends.find(
+          (f) => f.id === from.id || f.peerId === from.peerId
+        );
+        let dmId = localFriend ? `dm:${[curMe.id, localFriend.id].sort().join(':')}` : null;
+        if (!dmId) {
+          const synced = await syncRemotePeer(from, false);
+          dmId = synced?.dmChannelId || `dm:${[curMe.id, from.id].sort().join(':')}`;
+        }
+        await fetch('/api/p2p/sync-message', {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify({
+            channelId: dmId,
+            message: { ...data.message, channelId: dmId },
+            author: from,
+          }),
+        });
+        break;
+      }
+
+      case 'srv:message': {
+        if (!data.channelId || !data.message || data.from?.peerId === curMe.peerId) return;
+        await fetch('/api/p2p/sync-message', {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify({
+            channelId: data.channelId,
+            message: data.message,
+            author: data.from,
+          }),
+        });
+        break;
+      }
+
+      case 'srv:join-request': {
+        if (!data.inviteCode || !data.from || data.from.peerId === curMe.peerId) return;
+        const targetSrv = workspaceRef.current.servers.find(
+          (s) => s.inviteCode?.toUpperCase() === String(data.inviteCode).toUpperCase()
+        );
+        if (targetSrv) {
+          await Promise.all([
+            globalMeshRef.current?.sendServerSnapshotToPeer(data.from, targetSrv),
+            sendViaTunnel(data.from.peerId, {
+              type: 'srv:welcome',
+              from: curMe,
+              server: targetSrv,
+            }),
+          ]);
+        }
+        break;
+      }
+
+      case 'srv:welcome': {
+        if (!data.server) return;
+        const res = await fetch('/api/p2p/sync-server', {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify({ server: data.server, host: data.from }),
+        });
+        const saved = await res.json().catch(() => ({}));
+        if (saved?.ok && saved.server) {
+          await fetchWorkspace();
+          setServerModalMode(null);
+          setSelectedServerId(saved.server.id);
+          const firstTxt = saved.server.channels?.find((c) => c.type === 'text');
+          if (firstTxt) setSelectedChannelId(firstTxt.id);
+        }
+        break;
+      }
+
+      case 'call:ring': {
+        if (!data.from || !data.roomId || data.from.peerId === curMe.peerId) return;
+        mashSounds.joinVoice();
+        setIncomingCall({ from: data.from, roomId: data.roomId });
+        break;
+      }
+
+      case 'room:peer-joined': {
+        if (!data.roomId || !data.peerKey || data.peerKey === curMe.peerId) return;
+        const occ = {
+          peerKey: data.peerKey,
+          userId: data.user?.id || data.peerKey,
+          username: data.user?.username || 'pair',
+          displayName: data.user?.displayName || 'Pair P2P',
+          avatarColor: data.user?.avatarColor || '#5ec2a6',
+          deviceType: 'desktop',
+        };
+        setWorkspace((prev) => {
+          const curList = prev.voiceRooms[data.roomId] || [];
+          const filtered = curList.filter((p) => p.peerKey !== data.peerKey);
+          return {
+            ...prev,
+            voiceRooms: { ...prev.voiceRooms, [data.roomId]: [...filtered, occ] },
+          };
+        });
+
+        if (activeVoiceRoomRef.current === data.roomId) {
+          await Promise.all([
+            globalMeshRef.current?.broadcastRoomEvent(data.roomId, 'room:peer-here', {
+              targetPeerKey: data.peerKey,
+            }),
+            sendViaTunnel(data.peerKey, {
+              type: 'room:peer-here',
+              roomId: data.roomId,
+              peerKey: curMe.peerId,
+              user: curMe,
+              targetPeerKey: data.peerKey,
+            }),
+          ]);
+          if (p2pRef.current && !p2pRef.current.peers.has(data.peerKey)) {
+            await p2pRef.current.createPeerConnection(data.peerKey, occ, false);
+          }
+        }
+        break;
+      }
+
+      case 'room:peer-here': {
+        if (!data.roomId || !data.peerKey || data.peerKey === curMe.peerId) return;
+        const occ = {
+          peerKey: data.peerKey,
+          userId: data.user?.id || data.peerKey,
+          username: data.user?.username || 'pair',
+          displayName: data.user?.displayName || 'Pair P2P',
+          avatarColor: data.user?.avatarColor || '#5ec2a6',
+          deviceType: 'desktop',
+        };
+        setWorkspace((prev) => {
+          const curList = prev.voiceRooms[data.roomId] || [];
+          const filtered = curList.filter((p) => p.peerKey !== data.peerKey);
+          return {
+            ...prev,
+            voiceRooms: { ...prev.voiceRooms, [data.roomId]: [...filtered, occ] },
+          };
+        });
+
+        if (
+          activeVoiceRoomRef.current === data.roomId &&
+          data.targetPeerKey === curMe.peerId &&
+          p2pRef.current &&
+          !p2pRef.current.peers.has(data.peerKey)
+        ) {
+          await p2pRef.current.createPeerConnection(data.peerKey, occ, true);
+        }
+        break;
+      }
+
+      case 'room:peer-left': {
+        if (!data.roomId || !data.peerKey) return;
+        setWorkspace((prev) => {
+          const curList = prev.voiceRooms[data.roomId] || [];
+          return {
+            ...prev,
+            voiceRooms: {
+              ...prev.voiceRooms,
+              [data.roomId]: curList.filter((p) => p.peerKey !== data.peerKey),
+            },
+          };
+        });
+        p2pRef.current?.handlePeerLeft(data.peerKey);
+        break;
+      }
+
+      case 'webrtc:signal': {
+        if (
+          activeVoiceRoomRef.current === data.roomId &&
+          data.fromPeerKey &&
+          data.signal &&
+          data.fromPeerKey !== curMe.peerId
+        ) {
+          await p2pRef.current?.handleSignal(data.fromPeerKey, data.fromUser, data.signal);
+        }
+        break;
+      }
+
+      default:
+        break;
+    }
+  };
+
   // Initialize Global Encrypted P2P Mesh (Zero-IP Internet Rendezvous)
   useEffect(() => {
     if (!me?.peerId) return undefined;
     const mesh = new GlobalP2PMesh({
       me,
       onStatusChange: (st) => setMeshStatus(st),
-      onEvent: async (data) => {
-        const curMe = meRef.current;
-        if (!curMe) return;
-
-        switch (data.type) {
-          case 'friend:request': {
-            const from = data.from;
-            if (!from || from.peerId === curMe.peerId) return;
-            const alreadyFriend = workspaceRef.current.friends.some(
-              (f) => f.id === from.id || f.peerId === from.peerId
-            );
-            const weRequestedThem = sentRequestsRef.current.some((q) => {
-              const ql = q.toLowerCase();
-              return (
-                ql === from.username?.toLowerCase() ||
-                ql === from.peerId?.toLowerCase() ||
-                ql === `${from.username}#${from.tag}`.toLowerCase()
-              );
-            });
-
-            if (alreadyFriend || weRequestedThem) {
-              await mesh.sendFriendAccept(from);
-              await syncRemotePeer(from, weRequestedThem);
-              if (weRequestedThem) {
-                setSentRequests((prev) => prev.filter((q) => q.toLowerCase() !== from.username?.toLowerCase()));
-                setFriendFeedback(`✓ Connexion P2P établie avec ${from.displayName} !`);
-                setTimeout(() => setFriendFeedback(''), 3500);
-              }
-              return;
-            }
-
-            mashSounds.messageTick();
-            setIncomingRequests((prev) => {
-              if (prev.some((r) => r.peerId === from.peerId || r.id === from.id)) return prev;
-              return [from, ...prev];
-            });
-            break;
-          }
-
-          case 'friend:accept': {
-            const from = data.from;
-            if (!from || from.peerId === curMe.peerId) return;
-            mashSounds.unlockGate();
-            setSentRequests((prev) =>
-              prev.filter((q) => {
-                const ql = q.toLowerCase();
-                return (
-                  ql !== from.username?.toLowerCase() &&
-                  ql !== from.peerId?.toLowerCase() &&
-                  ql !== `${from.username}#${from.tag}`.toLowerCase()
-                );
-              })
-            );
-            await syncRemotePeer(from, true);
-            setFriendError('');
-            setFriendFeedback(`✓ ${from.displayName} a accepté ta demande d'ami !`);
-            setTimeout(() => setFriendFeedback(''), 4000);
-            break;
-          }
-
-          case 'dm:message': {
-            const from = data.from;
-            if (!from || !data.message) return;
-            let localFriend = workspaceRef.current.friends.find(
-              (f) => f.id === from.id || f.peerId === from.peerId
-            );
-            let dmId = localFriend
-              ? `dm:${[curMe.id, localFriend.id].sort().join(':')}`
-              : null;
-            if (!dmId) {
-              const synced = await syncRemotePeer(from, false);
-              dmId = synced?.dmChannelId || `dm:${[curMe.id, from.id].sort().join(':')}`;
-            }
-            await fetch('/api/p2p/sync-message', {
-              method: 'POST',
-              headers: authHeaders,
-              body: JSON.stringify({
-                channelId: dmId,
-                message: { ...data.message, channelId: dmId },
-                author: from,
-              }),
-            });
-            break;
-          }
-
-          case 'srv:message': {
-            if (!data.channelId || !data.message) return;
-            await fetch('/api/p2p/sync-message', {
-              method: 'POST',
-              headers: authHeaders,
-              body: JSON.stringify({
-                channelId: data.channelId,
-                message: data.message,
-                author: data.from,
-              }),
-            });
-            break;
-          }
-
-          case 'srv:join-request': {
-            if (!data.inviteCode || !data.from) return;
-            const targetSrv = workspaceRef.current.servers.find(
-              (s) => s.inviteCode?.toUpperCase() === String(data.inviteCode).toUpperCase()
-            );
-            if (targetSrv) {
-              await mesh.sendServerSnapshotToPeer(data.from, targetSrv);
-            }
-            break;
-          }
-
-          case 'srv:welcome': {
-            if (!data.server) return;
-            const res = await fetch('/api/p2p/sync-server', {
-              method: 'POST',
-              headers: authHeaders,
-              body: JSON.stringify({ server: data.server, host: data.from }),
-            });
-            const saved = await res.json().catch(() => ({}));
-            if (saved?.ok && saved.server) {
-              await fetchWorkspace();
-              setServerModalMode(null);
-              setSelectedServerId(saved.server.id);
-              const firstTxt = saved.server.channels?.find((c) => c.type === 'text');
-              if (firstTxt) setSelectedChannelId(firstTxt.id);
-            }
-            break;
-          }
-
-          case 'call:ring': {
-            if (!data.from || !data.roomId) return;
-            mashSounds.joinVoice();
-            setIncomingCall({ from: data.from, roomId: data.roomId });
-            break;
-          }
-
-          case 'room:peer-joined': {
-            if (!data.roomId || !data.peerKey || data.peerKey === curMe.peerId) return;
-            const occ = {
-              peerKey: data.peerKey,
-              userId: data.user?.id || data.peerKey,
-              username: data.user?.username || 'pair',
-              displayName: data.user?.displayName || 'Pair P2P',
-              avatarColor: data.user?.avatarColor || '#5ec2a6',
-              deviceType: 'desktop',
-            };
-            setWorkspace((prev) => {
-              const curList = prev.voiceRooms[data.roomId] || [];
-              const filtered = curList.filter((p) => p.peerKey !== data.peerKey);
-              return {
-                ...prev,
-                voiceRooms: { ...prev.voiceRooms, [data.roomId]: [...filtered, occ] },
-              };
-            });
-
-            if (activeVoiceRoomRef.current === data.roomId) {
-              await mesh.broadcastRoomEvent(data.roomId, 'room:peer-here', {
-                targetPeerKey: data.peerKey,
-              });
-              if (p2pRef.current && !p2pRef.current.peers.has(data.peerKey)) {
-                await p2pRef.current.createPeerConnection(data.peerKey, occ, false);
-              }
-            }
-            break;
-          }
-
-          case 'room:peer-here': {
-            if (!data.roomId || !data.peerKey || data.peerKey === curMe.peerId) return;
-            const occ = {
-              peerKey: data.peerKey,
-              userId: data.user?.id || data.peerKey,
-              username: data.user?.username || 'pair',
-              displayName: data.user?.displayName || 'Pair P2P',
-              avatarColor: data.user?.avatarColor || '#5ec2a6',
-              deviceType: 'desktop',
-            };
-            setWorkspace((prev) => {
-              const curList = prev.voiceRooms[data.roomId] || [];
-              const filtered = curList.filter((p) => p.peerKey !== data.peerKey);
-              return {
-                ...prev,
-                voiceRooms: { ...prev.voiceRooms, [data.roomId]: [...filtered, occ] },
-              };
-            });
-
-            if (
-              activeVoiceRoomRef.current === data.roomId &&
-              data.targetPeerKey === curMe.peerId &&
-              p2pRef.current &&
-              !p2pRef.current.peers.has(data.peerKey)
-            ) {
-              await p2pRef.current.createPeerConnection(data.peerKey, occ, true);
-            }
-            break;
-          }
-
-          case 'room:peer-left': {
-            if (!data.roomId || !data.peerKey) return;
-            setWorkspace((prev) => {
-              const curList = prev.voiceRooms[data.roomId] || [];
-              return {
-                ...prev,
-                voiceRooms: {
-                  ...prev.voiceRooms,
-                  [data.roomId]: curList.filter((p) => p.peerKey !== data.peerKey),
-                },
-              };
-            });
-            p2pRef.current?.handlePeerLeft(data.peerKey);
-            break;
-          }
-
-          case 'webrtc:signal': {
-            if (
-              activeVoiceRoomRef.current === data.roomId &&
-              data.fromPeerKey &&
-              data.signal
-            ) {
-              await p2pRef.current?.handleSignal(data.fromPeerKey, data.fromUser, data.signal);
-            }
-            break;
-          }
-
-          default:
-            break;
-        }
-      },
+      onEvent: (data) => handleP2PEventRef.current?.(data),
     });
 
     globalMeshRef.current = mesh;
@@ -550,6 +637,13 @@ export default function DesktopApp({
     if (activeVoiceRoomRef.current) {
       mesh.subscribeRoom(activeVoiceRoomRef.current);
     }
+    const port = workspaceRef.current.listenPort || 3080;
+    const ips = [];
+    for (const ip of workspaceRef.current.localIps || []) {
+      ips.push(ip, `${ip}:${port}`);
+    }
+    if (publicIp) ips.push(publicIp, `${publicIp}:${port}`);
+    if (ips.length > 0) mesh.registerIpTopics(ips);
 
     return () => {
       mesh.destroy();
@@ -573,6 +667,13 @@ export default function DesktopApp({
             payload.roomId,
             payload.signal
           );
+          sendViaTunnel(payload.targetPeerKey, {
+            type: 'webrtc:signal',
+            fromPeerKey: meRef.current?.peerId,
+            fromUser: meRef.current,
+            roomId: payload.roomId,
+            signal: payload.signal,
+          });
           return;
         }
         if (ws.readyState === 1) {
@@ -615,9 +716,22 @@ export default function DesktopApp({
             break;
           }
           case 'ws:ready': {
-            if (msg.voiceRooms) {
-              setWorkspace((prev) => ({ ...prev, voiceRooms: msg.voiceRooms }));
-            }
+            setWorkspace((prev) => ({
+              ...prev,
+              voiceRooms: msg.voiceRooms || prev.voiceRooms,
+              activeTunnels: msg.activeTunnels || prev.activeTunnels,
+            }));
+            break;
+          }
+          case 'p2p:tunnels': {
+            setWorkspace((prev) => ({
+              ...prev,
+              activeTunnels: msg.tunnels || [],
+            }));
+            break;
+          }
+          case 'p2p:direct_event': {
+            await handleP2PEventRef.current?.(msg.data);
             break;
           }
           case 'voice:rooms': {
@@ -750,8 +864,21 @@ export default function DesktopApp({
     globalMeshRef.current?.subscribeRoom(roomId);
     setTimeout(() => {
       globalMeshRef.current?.broadcastRoomEvent(roomId, 'room:peer-joined');
+      if (meRef.current?.peerId) {
+        sendViaTunnel(null, {
+          type: 'room:peer-joined',
+          roomId,
+          peerKey: meRef.current.peerId,
+          user: meRef.current,
+        });
+      }
       if (targetDmPeer) {
         globalMeshRef.current?.ringPeerForCall(targetDmPeer, roomId);
+        sendViaTunnel(targetDmPeer.peerId, {
+          type: 'call:ring',
+          from: meRef.current,
+          roomId,
+        });
       }
     }, 250);
   };
@@ -761,6 +888,14 @@ export default function DesktopApp({
     const prevRoom = activeVoiceRoomId;
     mashSounds.leaveVoice();
     globalMeshRef.current?.broadcastRoomEvent(prevRoom, 'room:peer-left');
+    if (meRef.current?.peerId) {
+      sendViaTunnel(null, {
+        type: 'room:peer-left',
+        roomId: prevRoom,
+        peerKey: meRef.current.peerId,
+        user: meRef.current,
+      });
+    }
     p2pRef.current?.leaveRoom();
     if (wsRef.current?.readyState === 1) {
       wsRef.current.send(JSON.stringify({ type: 'p2p:leave-room' }));
@@ -866,9 +1001,22 @@ export default function DesktopApp({
         const dmEntry = workspace.dmChannels.find((d) => d.id === selectedChannelId);
         if (dmEntry?.peer) {
           globalMeshRef.current?.sendDirectMessage(dmEntry.peer, selectedChannelId, data.message);
+          sendViaTunnel(dmEntry.peer.peerId, {
+            type: 'dm:message',
+            from: meRef.current,
+            channelId: selectedChannelId,
+            message: data.message,
+          });
         }
       } else if (currentServer) {
         globalMeshRef.current?.sendServerMessage(currentServer.id, selectedChannelId, data.message);
+        sendViaTunnel(null, {
+          type: 'srv:message',
+          from: meRef.current,
+          serverId: currentServer.id,
+          channelId: selectedChannelId,
+          message: data.message,
+        });
       }
     }
   };
@@ -902,21 +1050,68 @@ export default function DesktopApp({
   const handleAddFriend = async (e) => {
     e.preventDefault();
     const q = friendQuery.trim();
-    if (!q) return;
+    if (!q || connectingIp) return;
     setFriendError('');
     setFriendFeedback('');
 
     const qLow = q.toLowerCase();
-    if (
-      qLow.startsWith('mash-sv4') ||
-      qLow.startsWith('http://') ||
-      qLow.startsWith('https://') ||
-      qLow.includes('127.0.0.1') ||
-      qLow.includes(':3080')
-    ) {
+    if (qLow.startsWith('mash-sv4')) {
       setFriendError(
-        'Ne colle pas un Token ou une IP ici ! Entre juste le pseudo (ex: v0dka) ou le Peer ID (p2p-mash-...) de ton ami.'
+        "Ceci est un Token MASH-SV4 ! Entre l'IP de ton ami (ex: 26.48.12.90:3080) ou son pseudo (ex: v0dka)."
       );
+      return;
+    }
+
+    const looksLikeIp =
+      /^(?:ws:\/\/|wss:\/\/|http:\/\/|https:\/\/)?(?:\d{1,3}(?:\.\d{1,3}){3}|localhost)(?::\d{1,5})?\/?$/i.test(
+        q
+      ) || qLow.includes(':3080');
+
+    if (looksLikeIp) {
+      setConnectingIp(true);
+      try {
+        // Also send over MQTT IP inbox in parallel so NAT/box routers work without port-forwarding
+        globalMeshRef.current?.sendFriendRequestByIp(q);
+
+        const res = await fetch('/api/p2p/connect-ip', {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify({ address: q }),
+        });
+        const data = await res.json().catch(() => ({}));
+
+        if (res.ok && data.ok) {
+          setFriendQuery('');
+          setSentRequests((prev) => (prev.includes(q) ? prev : [q, ...prev]));
+          setFriendFeedback(
+            `✓ Connecté en direct à ${data.address} ! Demande d'ami envoyée sur le PC de ton pote.`
+          );
+          setTimeout(() => setFriendFeedback(''), 5500);
+          return;
+        }
+
+        if (res.status === 400) {
+          setFriendError(data.error || 'Adresse IP invalide.');
+          return;
+        }
+
+        // Status 502: Direct TCP port closed (NAT/Box), fallback to Internet P2P relay if online
+        if (meshStatus.online) {
+          setFriendQuery('');
+          setSentRequests((prev) => (prev.includes(q) ? prev : [q, ...prev]));
+          setFriendFeedback(
+            `✓ Port direct 3080 fermé, demande envoyée via relais P2P vers ${data.address || q} ! (Pour du direct pur sans box, utilisez Radmin VPN ou Tailscale).`
+          );
+          setTimeout(() => setFriendFeedback(''), 6000);
+        } else {
+          setFriendError(
+            data.error ||
+              `Impossible de joindre ${q}. Vérifie que MashVoice est ouvert chez ton ami (Radmin VPN / Tailscale / LAN ou port 3080 ouvert).`
+          );
+        }
+      } finally {
+        setConnectingIp(false);
+      }
       return;
     }
 
@@ -947,7 +1142,7 @@ export default function DesktopApp({
       setSelectedServerId('dms');
       setSelectedChannelId(data.dmChannelId);
     } else {
-      setFriendFeedback(`✓ Demande d'ami envoyée sur Internet à "${q}" ! En attente d'acceptation.`);
+      setFriendFeedback(`✓ Demande d'ami envoyée à "${q}" ! En attente d'acceptation.`);
     }
     setTimeout(() => setFriendFeedback(''), 4500);
   };
@@ -1190,24 +1385,82 @@ export default function DesktopApp({
                       letterSpacing: '0.03em',
                     }}
                   >
-                    <span>TON PROFIL AMI P2P</span>
+                    <span>MON IP &amp; PROFIL P2P</span>
                     <span
                       style={{
-                        color: meshStatus.online ? 'var(--emerald)' : 'var(--text-muted)',
+                        color:
+                          workspace.activeTunnels?.length > 0 || meshStatus.online
+                            ? 'var(--emerald)'
+                            : 'var(--gold-bright)',
                         fontFamily: 'var(--font-mono)',
                         fontSize: 10,
                       }}
                     >
-                      {meshStatus.online ? '● Internet OK' : '○ Connexion...'}
+                      {workspace.activeTunnels?.length > 0
+                        ? `● Direct IP (${workspace.activeTunnels.length})`
+                        : meshStatus.online
+                          ? '● Internet OK'
+                          : `● Port ${workspace.listenPort || 3080} Prêt`}
                     </span>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.35 }}>
-                    Envoie ton <strong>Pseudo</strong> à ton pote (aucune IP ni ouverture de port requise) :
+                  <div style={{ fontSize: 10.8, color: 'var(--text-secondary)', lineHeight: 1.35 }}>
+                    Envoie ton <strong>IP P2P</strong> (Radmin / Tailscale / LAN / Box) ou ton{' '}
+                    <strong>Pseudo</strong> à ton pote :
                   </div>
+                  {(workspace.localIps || []).map((ip) => {
+                    const port = workspace.listenPort || 3080;
+                    const fullAddr = `${ip}:${port}`;
+                    const label = ip.startsWith('26.')
+                      ? 'IP Radmin'
+                      : ip.startsWith('100.')
+                        ? 'IP Tailscale'
+                        : ip.startsWith('25.')
+                          ? 'IP Hamachi'
+                          : 'IP Réseau';
+                    return (
+                      <button
+                        key={ip}
+                        type="button"
+                        className="btn-chip"
+                        style={{
+                          justifyContent: 'center',
+                          fontSize: 11,
+                          borderColor: 'rgba(72, 199, 142, 0.45)',
+                          color: '#6ce0ad',
+                        }}
+                        onClick={() => {
+                          navigator.clipboard?.writeText(fullAddr);
+                          setFriendError('');
+                          setFriendFeedback(`✓ ${label} copiée : ${fullAddr}`);
+                          setTimeout(() => setFriendFeedback(''), 2800);
+                        }}
+                        title="Cliquer pour copier ton IP P2P directe"
+                      >
+                        <Copy size={12} /> {label} : {fullAddr}
+                      </button>
+                    );
+                  })}
+                  {publicIp && !(workspace.localIps || []).includes(publicIp) && (
+                    <button
+                      type="button"
+                      className="btn-chip"
+                      style={{ justifyContent: 'center', fontSize: 10.5 }}
+                      onClick={() => {
+                        const fullPub = `${publicIp}:${workspace.listenPort || 3080}`;
+                        navigator.clipboard?.writeText(fullPub);
+                        setFriendError('');
+                        setFriendFeedback(`✓ IP Publique copiée : ${fullPub}`);
+                        setTimeout(() => setFriendFeedback(''), 2800);
+                      }}
+                      title="Cliquer pour copier ton IP Internet publique"
+                    >
+                      <Copy size={11} /> IP Internet : {publicIp}:{workspace.listenPort || 3080}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn-chip"
-                    style={{ justifyContent: 'center', fontSize: 11 }}
+                    style={{ justifyContent: 'center', fontSize: 10.5, opacity: 0.9 }}
                     onClick={() => {
                       const tagStr = `${me?.username}#${me?.tag || '0001'}`;
                       navigator.clipboard?.writeText(tagStr);
@@ -1216,35 +1469,27 @@ export default function DesktopApp({
                       setTimeout(() => setFriendFeedback(''), 2600);
                     }}
                   >
-                    <Copy size={12} /> {me?.username}#{me?.tag || '0001'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-chip"
-                    style={{ justifyContent: 'center', fontSize: 10, opacity: 0.85 }}
-                    onClick={() => {
-                      navigator.clipboard?.writeText(me?.peerId || '');
-                      setFriendError('');
-                      setFriendFeedback(`✓ Peer ID copié : ${me?.peerId}`);
-                      setTimeout(() => setFriendFeedback(''), 2600);
-                    }}
-                  >
-                    <Copy size={11} /> {me?.peerId}
+                    <Copy size={11} /> Pseudo : {me?.username}#{me?.tag || '0001'}
                   </button>
                 </div>
 
                 <form onSubmit={handleAddFriend} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div className="cat-header">AJOUTER UN AMI (PSEUDO OU PEER ID)</div>
+                  <div className="cat-header">AJOUTER PAR IP DIRECTE (OU PSEUDO)</div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <input
                       className="mash-input"
                       style={{ padding: '7px 10px', fontSize: 12 }}
-                      placeholder="ex: v0dka ou v0dka#4921"
+                      placeholder="ex: 26.48.12.90:3080 ou v0dka"
                       value={friendQuery}
                       onChange={(e) => setFriendQuery(e.target.value)}
                     />
-                    <button type="submit" className="btn-chip" title="Envoyer une demande d'ami P2P">
-                      <UserPlus size={14} />
+                    <button
+                      type="submit"
+                      className="btn-chip"
+                      disabled={connectingIp}
+                      title="Connecter l'IP directe ou envoyer une demande d'ami"
+                    >
+                      {connectingIp ? '...' : <UserPlus size={14} />}
                     </button>
                   </div>
                   {friendFeedback && (
@@ -1328,7 +1573,7 @@ export default function DesktopApp({
                   <div className="channel-list" style={{ marginTop: 6 }}>
                     {workspace.dmChannels.length === 0 && (
                       <div style={{ fontSize: 11.5, color: 'var(--text-muted)', padding: '6px 4px' }}>
-                        Tape le pseudo de ton ami ci-dessus pour lui envoyer une demande P2P !
+                        Entre l&apos;IP de ton ami (ex: Radmin VPN / LAN / :3080) ou son pseudo ci-dessus !
                       </div>
                     )}
                     {workspace.dmChannels.map(({ id, peer }) => (
@@ -2128,7 +2373,14 @@ export default function DesktopApp({
           server={currentServer}
           usersMap={usersMap}
           sessionToken={sessionToken}
-          onJoinRemoteServer={(code) => globalMeshRef.current?.requestJoinServerByInvite(code)}
+          onJoinRemoteServer={(code) => {
+            globalMeshRef.current?.requestJoinServerByInvite(code);
+            sendViaTunnel(null, {
+              type: 'srv:join-request',
+              inviteCode: String(code || '').trim().toUpperCase(),
+              from: meRef.current,
+            });
+          }}
           onServerChange={(srv, switchNow, newCh) => {
             setWorkspace((prev) => {
               const exists = prev.servers.some((s) => s.id === srv.id);
