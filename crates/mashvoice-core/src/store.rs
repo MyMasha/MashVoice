@@ -613,8 +613,8 @@ impl MashStore {
 
     pub fn save(&self) {
         let guard = self.state.read();
-        if let Ok(json) = serde_json::to_string_pretty(&*guard) {
-            let _ = fs::write(&self.db_file, json);
+        if let Ok(json) = serde_json::to_vec_pretty(&*guard) {
+            let _ = crate::security::write_admin_secret_file(&self.db_file, &json);
         }
     }
 

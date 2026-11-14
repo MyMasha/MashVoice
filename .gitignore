@@ -1,13 +1,31 @@
+# Build outputs & dependencies
 target/
+src-tauri/target/
+src-tauri/gen/
 node_modules/
 dist/
+
+# Admin-only runtime secrets & local encrypted vaults (chmod 0600 — NEVER commit)
 data/*.json
 data/*.bin
-data/master.secret
+data/*.secret
+data/*.key
 !data/.gitkeep
+
+# Environment variables & private signing keys (Admin-only — NEVER commit)
 .env
-.env.local
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.secret
+*.vault
+.tauri/
+secrets/
+
+# Logs & OS metadata
 *.log
 .DS_Store
-src-tauri/gen/
-src-tauri/target/
+Thumbs.db

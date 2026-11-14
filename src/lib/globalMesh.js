@@ -1,180 +1,234 @@
 /**
- * MashVoice Singularity — Zero-Config Global Encrypted P2P Rendezvous Mesh
+ * MashVoice Singularity — Zero-IP Relay Client (`mv-relay-v1` on `https://zyntra.win`)
  *
- * Allows friends on completely separate home networks / ISPs to:
- *  1. Discover and add each other by Pseudo (`v0dka` / `v0dka#1234`) or Peer ID (`p2p-mash-...`)
- *     WITHOUT port-forwarding, VPN, or sharing IP addresses!
- *  2. Receive live Discord-style Friend Requests (Accept / Decline).
- *  3. Exchange AES-256-GCM End-to-End Encrypted DMs, Server Messages & Invites (`MASH-XXXXXX`).
- *  4. Negotiate direct WebRTC P2P Voice, Camera & 120 FPS Screen Streams across NATs.
- *
- * Uses pure binary MQTT 3.1.1 over TLS WebSockets (`wss://`) across multiple redundant public brokers
- * with WebCrypto AES-256-GCM payload encryption so brokers only ever see opaque ciphertext.
+ * Connects MashVoice Desktop (Tauri v2) & Web clients over `wss://zyntra.win/api/mashvoice/ws`
+ * (with automatic HTTPS REST fallback on `https://zyntra.win/api/mashvoice/publish` & `/poll`) so:
+ *  1. Friends add each other strictly by Pseudo (`v0dka` / `v0dka#4921`) — ZERO IP address!
+ *  2. Offline friend requests & DMs are queued up to 7 days in Zyntra's SQLite mailbox until `ack`ed.
+ *  3. Payloads use dynamic WebCrypto ECDH P-256 End-to-End Encryption (`mv4e1.e2e.*`) for friends,
+ *     invite-derived AES-256-GCM (`mv4e1.srv.*`) for community servers, and topic-scoped handshakes
+ *     (`mv4e1.hs.*`) — ZERO static global encryption key in Open-Source code!
+ *  4. Voice, Camera & 120 FPS Screen Streams flow directly P2P via WebRTC after SDP/ICE signaling.
  */
 
-const GLOBAL_WSS_BROKERS = [
-  'wss://broker.emqx.io:8084/mqtt',
-  'wss://broker.hivemq.com:8884/mqtt',
-  'wss://test.mosquitto.org:8081/mqtt',
-];
+export const ZYNTRA_HTTP_BASE = 'https://zyntra.win/api/mashvoice';
+export const ZYNTRA_WS_URL = 'wss://zyntra.win/api/mashvoice/ws';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-function encodeVarLen(x) {
-  const out = [];
-  let val = x;
-  do {
-    let byte = val % 128;
-    val = Math.floor(val / 128);
-    if (val > 0) byte |= 0x80;
-    out.push(byte);
-  } while (val > 0);
-  return out;
+/**
+ * Exact `normKey` normalization matching `mashvoice-relay.js` on `zyntra.win`.
+ */
+export function normKey(raw) {
+  return String(raw || '')
+    .trim()
+    .replace(/^@+/, '')
+    .toLowerCase()
+    .replace(/#/g, '-tag-')
+    .replace(/[^a-z0-9_.:-]/g, '')
+    .slice(0, 96);
 }
 
-function encodeUtf8Field(str) {
-  const bytes = enc.encode(str);
-  return [(bytes.length >> 8) & 0xff, bytes.length & 0xff, ...bytes];
+/**
+ * Normalize a bare pseudo / identifier without `:` so it sits cleanly after `inbox:`.
+ */
+export function normTopicKey(raw) {
+  return normKey(raw).replace(/:/g, '-');
 }
 
-function buildConnectPacket(clientId) {
-  const varHeader = [
-    0x00, 0x04, 0x4d, 0x51, 0x54, 0x54, // "MQTT"
-    0x04, // Protocol Level 4 (MQTT 3.1.1)
-    0x02, // Clean Session
-    0x00, 0x3c, // KeepAlive 60s
-  ];
-  const payload = encodeUtf8Field(clientId);
-  const rem = varHeader.length + payload.length;
-  return new Uint8Array([0x10, ...encodeVarLen(rem), ...varHeader, ...payload]);
-}
-
-function buildSubscribePacket(packetId, topics) {
-  const safeId = ((packetId - 1) % 65000) + 1;
-  const varHeader = [(safeId >> 8) & 0xff, safeId & 0xff];
-  const payload = [];
-  for (const t of topics) {
-    payload.push(...encodeUtf8Field(t), 0x00); // QoS 0
-  }
-  const rem = varHeader.length + payload.length;
-  return new Uint8Array([0x82, ...encodeVarLen(rem), ...varHeader, ...payload]);
-}
-
-function buildPublishPacket(topic, payloadStr) {
-  const topicField = encodeUtf8Field(topic);
-  const msgBytes = enc.encode(payloadStr);
-  const rem = topicField.length + msgBytes.length;
-  const out = new Uint8Array(1 + 4 + rem);
-  let pos = 0;
-  out[pos++] = 0x30; // PUBLISH QoS 0
-  for (const b of encodeVarLen(rem)) out[pos++] = b;
-  out.set(topicField, pos);
-  pos += topicField.length;
-  out.set(msgBytes, pos);
-  pos += msgBytes.length;
-  return out.subarray(0, pos);
-}
-
-function parseMqttFrames(u8) {
-  const frames = [];
-  let offset = 0;
-  while (offset < u8.length) {
-    const first = u8[offset++];
-    let mult = 1;
-    let remLen = 0;
-    let b = 0;
-    do {
-      if (offset >= u8.length) return frames;
-      b = u8[offset++];
-      remLen += (b & 0x7f) * mult;
-      mult *= 128;
-    } while ((b & 0x80) !== 0);
-
-    if (offset + remLen > u8.length) break;
-    const body = u8.subarray(offset, offset + remLen);
-    offset += remLen;
-
-    const pktType = first >> 4;
-    const flags = first & 0x0f;
-    if (pktType === 3 && body.length >= 2) {
-      // PUBLISH
-      const tLen = (body[0] << 8) | body[1];
-      const topic = dec.decode(body.subarray(2, 2 + tLen));
-      const qos = (flags >> 1) & 0x03;
-      const payloadStart = 2 + tLen + (qos > 0 ? 2 : 0);
-      const payloadText = dec.decode(body.subarray(payloadStart));
-      frames.push({ type: 'publish', topic, payloadText });
-    } else if (pktType === 2) {
-      frames.push({ type: 'connack', returnCode: body[1] || 0 });
-    }
-  }
-  return frames;
-}
-
-// Derive shared AES-256-GCM key via WebCrypto so public brokers never see plaintext
-let cachedCryptoKey = null;
-async function getMeshKey() {
-  if (cachedCryptoKey) return cachedCryptoKey;
-  const seed = await crypto.subtle.digest(
-    'SHA-256',
-    enc.encode('MashVoice-Singularity-4.1-Global-E2EE-Mesh-Key')
-  );
-  cachedCryptoKey = await crypto.subtle.importKey('raw', seed, { name: 'AES-GCM' }, false, [
-    'encrypt',
-    'decrypt',
-  ]);
-  return cachedCryptoKey;
-}
-
-function toBase64(u8) {
+function toBase64Url(u8) {
   let bin = '';
   for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
-  return btoa(bin);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function fromBase64(b64) {
-  const bin = atob(b64);
+function fromBase64Url(b64u) {
+  const b64 = String(b64u || '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/');
+  const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+  const bin = atob(b64 + pad);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
 
-async function encryptEnvelope(obj) {
-  const key = await getMeshKey();
+// --- Local ECDH P-256 Identity & Peer Keyring (Private key never leaves local device) ---
+const ECDH_STORAGE_KEY = 'mashvoice.e2ee.ecdhIdentity.v1';
+const PEER_PUBS_STORAGE_KEY = 'mashvoice.e2ee.peerPubs.v1';
+
+let ecdhReadyPromise = null;
+let localEcdhPrivKey = null;
+let localEcdhPubB64u = '';
+
+async function ensureLocalEcdhIdentity() {
+  if (localEcdhPrivKey && localEcdhPubB64u) {
+    return { privKey: localEcdhPrivKey, pubB64u: localEcdhPubB64u };
+  }
+  if (ecdhReadyPromise) return ecdhReadyPromise;
+
+  ecdhReadyPromise = (async () => {
+    try {
+      const savedRaw = localStorage.getItem(ECDH_STORAGE_KEY);
+      if (savedRaw) {
+        const parsed = JSON.parse(savedRaw);
+        if (parsed?.privJwk && parsed?.pubB64u) {
+          localEcdhPrivKey = await crypto.subtle.importKey(
+            'jwk',
+            parsed.privJwk,
+            { name: 'ECDH', namedCurve: 'P-256' },
+            false,
+            ['deriveBits']
+          );
+          localEcdhPubB64u = parsed.pubB64u;
+          return { privKey: localEcdhPrivKey, pubB64u: localEcdhPubB64u };
+        }
+      }
+    } catch {
+      // regenerate cleanly below
+    }
+
+    const kp = await crypto.subtle.generateKey(
+      { name: 'ECDH', namedCurve: 'P-256' },
+      true,
+      ['deriveBits']
+    );
+    const privJwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
+    const rawPub = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
+    localEcdhPubB64u = toBase64Url(rawPub);
+    localEcdhPrivKey = await crypto.subtle.importKey(
+      'jwk',
+      privJwk,
+      { name: 'ECDH', namedCurve: 'P-256' },
+      false,
+      ['deriveBits']
+    );
+    try {
+      localStorage.setItem(
+        ECDH_STORAGE_KEY,
+        JSON.stringify({ privJwk, pubB64u: localEcdhPubB64u })
+      );
+    } catch {
+      // ignore storage quota
+    }
+    return { privKey: localEcdhPrivKey, pubB64u: localEcdhPubB64u };
+  })();
+
+  return ecdhReadyPromise;
+}
+
+function loadPeerPubsMap() {
+  try {
+    const raw = localStorage.getItem(PEER_PUBS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+const peerPubsByKey = loadPeerPubsMap();
+const sharedAesCache = new Map();
+const contextAesCache = new Map();
+
+function rememberPeerPublicKey(userOrPeerKey, pubB64u) {
+  if (!pubB64u || typeof pubB64u !== 'string') return;
+  let changed = false;
+  const keys = [];
+  if (typeof userOrPeerKey === 'string') {
+    keys.push(normTopicKey(userOrPeerKey));
+  } else if (userOrPeerKey && typeof userOrPeerKey === 'object') {
+    if (userOrPeerKey.peerId) keys.push(normTopicKey(userOrPeerKey.peerId));
+    if (userOrPeerKey.id) keys.push(normTopicKey(userOrPeerKey.id));
+    if (userOrPeerKey.username) keys.push(normTopicKey(userOrPeerKey.username));
+  }
+  for (const k of keys) {
+    if (k && peerPubsByKey[k] !== pubB64u) {
+      peerPubsByKey[k] = pubB64u;
+      changed = true;
+    }
+  }
+  if (changed) {
+    try {
+      localStorage.setItem(PEER_PUBS_STORAGE_KEY, JSON.stringify(peerPubsByKey));
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function lookupPeerPublicKey(target) {
+  if (!target) return null;
+  if (typeof target === 'string') {
+    return peerPubsByKey[normTopicKey(target)] || null;
+  }
+  if (target.ecdhPub) return target.ecdhPub;
+  return (
+    (target.peerId && peerPubsByKey[normTopicKey(target.peerId)]) ||
+    (target.id && peerPubsByKey[normTopicKey(target.id)]) ||
+    (target.username && peerPubsByKey[normTopicKey(target.username)]) ||
+    null
+  );
+}
+
+async function deriveEcdhAesKey(remotePubB64u) {
+  if (sharedAesCache.has(remotePubB64u)) return sharedAesCache.get(remotePubB64u);
+  const { privKey } = await ensureLocalEcdhIdentity();
+  const remotePubKey = await crypto.subtle.importKey(
+    'raw',
+    fromBase64Url(remotePubB64u),
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    []
+  );
+  const sharedBits = new Uint8Array(
+    await crypto.subtle.deriveBits({ name: 'ECDH', public: remotePubKey }, privKey, 256)
+  );
+  const domainPrefix = enc.encode('mv-relay-v1:ecdh-aes256gcm:');
+  const material = new Uint8Array(domainPrefix.length + sharedBits.length);
+  material.set(domainPrefix, 0);
+  material.set(sharedBits, domainPrefix.length);
+  const hash = await crypto.subtle.digest('SHA-256', material);
+  const aesKey = await crypto.subtle.importKey('raw', hash, { name: 'AES-GCM' }, false, [
+    'encrypt',
+    'decrypt',
+  ]);
+  sharedAesCache.set(remotePubB64u, aesKey);
+  return aesKey;
+}
+
+async function deriveContextAesKey(domain, secretStr) {
+  const cacheId = `${domain}|${secretStr}`;
+  if (contextAesCache.has(cacheId)) return contextAesCache.get(cacheId);
+  const seed = await crypto.subtle.digest(
+    'SHA-256',
+    enc.encode(`mv-relay-v1:${domain}:${secretStr}`)
+  );
+  const aesKey = await crypto.subtle.importKey('raw', seed, { name: 'AES-GCM' }, false, [
+    'encrypt',
+    'decrypt',
+  ]);
+  contextAesCache.set(cacheId, aesKey);
+  return aesKey;
+}
+
+async function aesSeal(aesKey, obj) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const plain = enc.encode(JSON.stringify(obj));
-  const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain));
-  return JSON.stringify({ v: 4, iv: toBase64(iv), ct: toBase64(cipher) });
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, aesKey, plain));
+  const combined = new Uint8Array(12 + ct.length);
+  combined.set(iv, 0);
+  combined.set(ct, 12);
+  return toBase64Url(combined);
 }
 
-async function decryptEnvelope(rawText) {
-  const parsed = JSON.parse(rawText);
-  if (!parsed?.iv || !parsed?.ct) return null;
-  const key = await getMeshKey();
-  const iv = fromBase64(parsed.iv);
-  const ct = fromBase64(parsed.ct);
-  const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+async function aesOpen(aesKey, combinedB64u) {
+  const combined = fromBase64Url(combinedB64u);
+  if (combined.length <= 12) return null;
+  const iv = combined.subarray(0, 12);
+  const ct = combined.subarray(12);
+  const plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, aesKey, ct);
   return JSON.parse(dec.decode(new Uint8Array(plainBuf)));
-}
-
-// IMPORTANT: Never allow '#' or '+' in MQTT topics (they are MQTT wildcards and cause brokers to drop the socket!)
-export function normTopicKey(s) {
-  return String(s || '')
-    .trim()
-    .toLowerCase()
-    .replace(/#/g, '-tag-')
-    .replace(/:/g, '-')
-    .replace(/[^a-z0-9_.-]/g, '');
-}
-
-export function extractCleanIp(raw) {
-  const s = String(raw || '')
-    .trim()
-    .replace(/^https?:\/\//i, '')
-    .replace(/^wss?:\/\//i, '')
-    .split('/')[0];
-  return s.split(':')[0].trim();
 }
 
 export class GlobalP2PMesh {
@@ -182,18 +236,39 @@ export class GlobalP2PMesh {
     this.me = me;
     this.onEvent = onEvent;
     this.onStatusChange = onStatusChange;
-    this.sockets = new Map();
+    this.ws = null;
+    this.wsReady = false;
+    this.httpAlive = false;
     this.subscribedTopics = new Set();
+    this.serverSecrets = new Map(); // normKey("srv:...") -> inviteCode
     this.seenIds = new Set();
-    this.pktSeq = 1;
+    this.pendingAckByTopic = new Map(); // topic -> Set<msgId>
+    this.lastDeliverTs = 0;
     this.destroyed = false;
     this.pingTimer = null;
+    this.pollTimer = null;
+    this.reconnectTimer = null;
+
+    ensureLocalEcdhIdentity().catch(() => {});
 
     if (me) {
       this.addBaseSubscriptions(me);
     }
-    this.connectBrokers();
-    this.pingTimer = setInterval(() => this.sendPingAll(), 20000);
+    this.connectWebSocket();
+    this.pingTimer = setInterval(() => this.sendPing(), 25_000);
+    this.pollTimer = setInterval(() => {
+      if (!this.wsReady) {
+        this.pollHttpFallback();
+      }
+    }, 4500);
+  }
+
+  async enrichSelfProfile() {
+    const { pubB64u } = await ensureLocalEcdhIdentity();
+    return {
+      ...this.me,
+      ecdhPub: pubB64u,
+    };
   }
 
   updateMe(me) {
@@ -206,332 +281,607 @@ export class GlobalP2PMesh {
     const u = normTopicKey(me.username);
     const d = normTopicKey(me.displayName);
     const tag = String(me.tag || '').trim();
-    const uTag = normTopicKey(`${me.username}#${tag}`);
+    const uTag = tag ? normTopicKey(`${me.username}#${tag}`) : '';
     const pid = normTopicKey(me.peerId);
     const uid = normTopicKey(me.id);
 
-    const list = [
-      `mashvoice/v4/inbox/${u}`,
-      `mashvoice/v4/inbox/${uTag}`,
-      `mashvoice/v4/inbox/${pid}`,
-      `mashvoice/v4/uid/${uid}`,
-      `mashvoice/v4/signal/${pid}`,
-      `mashvoice/v4/presence`,
-    ];
+    const list = [];
+    if (u) list.push(`inbox:${u}`);
+    if (uTag && uTag !== u) list.push(`inbox:${uTag}`);
+    if (pid) list.push(`inbox:${pid}`);
+    if (uid) list.push(`inbox:${uid}`);
     if (d && d !== u) {
-      list.push(`mashvoice/v4/inbox/${d}`);
-      list.push(`mashvoice/v4/inbox/${normTopicKey(`${me.displayName}#${tag}`)}`);
+      list.push(`inbox:${d}`);
+      if (tag) list.push(`inbox:${normTopicKey(`${me.displayName}#${tag}`)}`);
     }
     this.subscribeTopics(list);
-  }
-
-  registerIpTopics(ips = []) {
-    const topics = [];
-    for (const rawIp of ips) {
-      const ip = normTopicKey(extractCleanIp(rawIp));
-      if (ip && ip !== '127.0.0.1' && ip !== 'localhost') {
-        topics.push(`mashvoice/v4/ip/${ip}`);
-      }
-    }
-    this.subscribeTopics(topics);
   }
 
   subscribeServer(server) {
     if (!server) return;
     const topics = [];
-    if (server.id) topics.push(`mashvoice/v4/srv/${normTopicKey(server.id)}`);
+    const inviteSecret = String(server.inviteCode || server.id || '').trim().toUpperCase();
+    if (server.id) {
+      const srvTopic = normKey(`srv:${normTopicKey(server.id)}`);
+      topics.push(srvTopic);
+      if (inviteSecret) this.serverSecrets.set(srvTopic, inviteSecret);
+    }
     if (server.inviteCode) {
-      topics.push(`mashvoice/v4/invite/${normTopicKey(server.inviteCode)}`);
+      const invTopic = normKey(`invite:${normTopicKey(server.inviteCode)}`);
+      topics.push(invTopic);
+      if (inviteSecret) this.serverSecrets.set(invTopic, inviteSecret);
     }
     this.subscribeTopics(topics);
   }
 
   subscribeRoom(roomId) {
     if (!roomId) return;
-    this.subscribeTopics([`mashvoice/v4/room/${normTopicKey(roomId)}`]);
+    this.subscribeTopics([normKey(`room:${normTopicKey(roomId)}`)]);
   }
 
   subscribeTopics(topics) {
-    const fresh = [];
-    for (const t of topics) {
-      if (t && !this.subscribedTopics.has(t)) {
-        this.subscribedTopics.add(t);
-        fresh.push(t);
+    let added = false;
+    for (const raw of topics) {
+      const clean = normKey(raw);
+      if (clean && !this.subscribedTopics.has(clean)) {
+        this.subscribedTopics.add(clean);
+        added = true;
       }
     }
-    if (fresh.length === 0) return;
-
-    const pkt = buildSubscribePacket(this.pktSeq++, fresh);
-    for (const entry of this.sockets.values()) {
-      if (entry.ready && entry.ws.readyState === 1) {
-        try {
-          entry.ws.send(pkt);
-        } catch {
-          // ignore
-        }
-      }
+    if (added && this.ws && this.ws.readyState === 1) {
+      this.sendSubscribeFrame();
     }
   }
 
-  connectBrokers() {
-    for (const url of GLOBAL_WSS_BROKERS) {
-      this.connectSingleBroker(url);
-    }
-  }
-
-  connectSingleBroker(url) {
-    if (this.destroyed) return;
+  sendSubscribeFrame() {
+    if (!this.ws || this.ws.readyState !== 1) return;
+    const allTopics = Array.from(this.subscribedTopics).slice(0, 32);
+    if (allTopics.length === 0) return;
     try {
-      const ws = new WebSocket(url, ['mqtt']);
-      ws.binaryType = 'arraybuffer';
-      const clientId = `mv4${Math.random().toString(36).replace(/[^a-z0-9]/gi, '').slice(0, 14)}`;
-      const entry = { ws, ready: false, url };
-      this.sockets.set(url, entry);
+      this.ws.send(
+        JSON.stringify({
+          op: 'subscribe',
+          peerId: this.me?.peerId || '',
+          pseudo: normTopicKey(this.me?.username || ''),
+          tag: String(this.me?.tag || ''),
+          topics: allTopics,
+          sinceTs: 0,
+        })
+      );
+    } catch {
+      // ignore socket race
+    }
+  }
+
+  connectWebSocket() {
+    if (this.destroyed) return;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    try {
+      const ws = new WebSocket(ZYNTRA_WS_URL);
+      this.ws = ws;
 
       ws.onopen = () => {
-        try {
-          ws.send(buildConnectPacket(clientId));
-        } catch {
-          // ignore
-        }
+        this.sendSubscribeFrame();
       };
 
       ws.onmessage = async (ev) => {
         try {
-          const buf =
-            ev.data instanceof ArrayBuffer
-              ? new Uint8Array(ev.data)
-              : new Uint8Array(await ev.data.arrayBuffer());
-          const frames = parseMqttFrames(buf);
-          for (const f of frames) {
-            if (f.type === 'connack' && f.returnCode === 0) {
-              entry.ready = true;
+          const frame = JSON.parse(String(ev.data));
+          if (frame.op === 'sub_ack') {
+            this.wsReady = true;
+            this.emitStatus();
+          } else if (frame.op === 'pong') {
+            if (!this.wsReady) {
+              this.wsReady = true;
               this.emitStatus();
-              const allTopics = Array.from(this.subscribedTopics);
-              if (allTopics.length > 0) {
-                ws.send(buildSubscribePacket(this.pktSeq++, allTopics));
-              }
-              this.announcePresence();
-            } else if (f.type === 'publish') {
-              const data = await decryptEnvelope(f.payloadText).catch(() => null);
-              if (!data || !data.msgId) continue;
-              if (this.seenIds.has(data.msgId)) continue;
-              this.seenIds.add(data.msgId);
-              if (this.seenIds.size > 800) {
-                const first = this.seenIds.values().next().value;
-                this.seenIds.delete(first);
-              }
-              if (data.senderPeerId && data.senderPeerId === this.me?.peerId) continue;
-              this.onEvent?.(data, f.topic);
             }
+          } else if (frame.op === 'deliver') {
+            await this.handleDeliveredItem(frame);
           }
         } catch {
-          // ignore malformed packet
+          // ignore malformed frame
         }
       };
 
       ws.onclose = () => {
-        entry.ready = false;
+        this.wsReady = false;
         this.emitStatus();
         if (!this.destroyed) {
-          setTimeout(() => this.connectSingleBroker(url), 5000);
+          this.reconnectTimer = setTimeout(() => this.connectWebSocket(), 3500);
         }
       };
 
       ws.onerror = () => {};
     } catch {
-      // ignore offline
+      this.wsReady = false;
+      this.emitStatus();
+      if (!this.destroyed) {
+        this.reconnectTimer = setTimeout(() => this.connectWebSocket(), 4500);
+      }
     }
   }
 
   emitStatus() {
-    let connectedCount = 0;
-    for (const e of this.sockets.values()) {
-      if (e.ready && e.ws.readyState === 1) connectedCount += 1;
-    }
+    const online = this.wsReady || this.httpAlive;
     this.onStatusChange?.({
-      online: connectedCount > 0,
-      brokersConnected: connectedCount,
+      online,
+      relay: 'zyntra.win',
+      mode: this.wsReady ? 'wss' : this.httpAlive ? 'https' : 'connecting',
+      brokersConnected: online ? 1 : 0,
     });
   }
 
-  sendPingAll() {
-    const ping = new Uint8Array([0xc0, 0x00]);
-    for (const e of this.sockets.values()) {
-      if (e.ready && e.ws.readyState === 1) {
-        try {
-          e.ws.send(ping);
-        } catch {
-          // ignore
-        }
+  sendPing() {
+    if (this.ws && this.ws.readyState === 1) {
+      try {
+        this.ws.send(JSON.stringify({ op: 'ping', ts: Date.now() }));
+      } catch {
+        // ignore
       }
     }
   }
 
-  async publish(topic, payloadObj) {
-    const envelope = {
+  async sealForTopic(topic, payloadObj, remoteEcdhPub = null) {
+    const cleanTopic = normKey(topic);
+    if (remoteEcdhPub) {
+      try {
+        const { pubB64u } = await ensureLocalEcdhIdentity();
+        const aesKey = await deriveEcdhAesKey(remoteEcdhPub);
+        const sealed = await aesSeal(aesKey, payloadObj);
+        return `mv4e1.e2e.${pubB64u}.${sealed}`;
+      } catch {
+        // fallback below if peer pubkey was malformed
+      }
+    }
+
+    const srvSecret = this.serverSecrets.get(cleanTopic);
+    if (srvSecret) {
+      const aesKey = await deriveContextAesKey('srv', srvSecret);
+      const sealed = await aesSeal(aesKey, payloadObj);
+      return `mv4e1.srv.${sealed}`;
+    }
+
+    const aesKey = await deriveContextAesKey('topic', cleanTopic);
+    const sealed = await aesSeal(aesKey, payloadObj);
+    return `mv4e1.hs.${sealed}`;
+  }
+
+  async openFromTopic(topic, envelopeStr) {
+    const raw = String(envelopeStr || '').trim();
+    if (!raw.startsWith('mv4e1.')) return null;
+    const cleanTopic = normKey(topic);
+
+    if (raw.startsWith('mv4e1.e2e.')) {
+      const rest = raw.slice('mv4e1.e2e.'.length);
+      const dotIdx = rest.indexOf('.');
+      if (dotIdx <= 0) return null;
+      const senderPubB64u = rest.slice(0, dotIdx);
+      const ctB64u = rest.slice(dotIdx + 1);
+      const aesKey = await deriveEcdhAesKey(senderPubB64u);
+      const opened = await aesOpen(aesKey, ctB64u);
+      if (opened?.from) rememberPeerPublicKey(opened.from, senderPubB64u);
+      if (opened?.fromUser) rememberPeerPublicKey(opened.fromUser, senderPubB64u);
+      return opened;
+    }
+
+    if (raw.startsWith('mv4e1.srv.')) {
+      const ctB64u = raw.slice('mv4e1.srv.'.length);
+      const secretCandidates = new Set();
+      const direct = this.serverSecrets.get(cleanTopic);
+      if (direct) secretCandidates.add(direct);
+      for (const s of this.serverSecrets.values()) secretCandidates.add(s);
+      for (const sec of secretCandidates) {
+        try {
+          const aesKey = await deriveContextAesKey('srv', sec);
+          const opened = await aesOpen(aesKey, ctB64u);
+          if (opened) return opened;
+        } catch {
+          // try next server invite secret
+        }
+      }
+      return null;
+    }
+
+    if (raw.startsWith('mv4e1.hs.')) {
+      const ctB64u = raw.slice('mv4e1.hs.'.length);
+      const topicCandidates = [cleanTopic, ...this.subscribedTopics];
+      for (const candidate of topicCandidates) {
+        try {
+          const aesKey = await deriveContextAesKey('topic', candidate);
+          const opened = await aesOpen(aesKey, ctB64u);
+          if (opened) return opened;
+        } catch {
+          // try next subscribed inbox alias
+        }
+      }
+      return null;
+    }
+
+    // Legacy mv4e1.<iv+ct> compatibility keyed by topic
+    const ctB64u = raw.slice('mv4e1.'.length);
+    const aesKey = await deriveContextAesKey('topic', cleanTopic);
+    return aesOpen(aesKey, ctB64u);
+  }
+
+  async handleDeliveredItem(item) {
+    if (!item?.msgId || !item?.envelope) return;
+    if (item.ts && item.ts > this.lastDeliverTs) {
+      this.lastDeliverTs = item.ts;
+    }
+    if (this.seenIds.has(item.msgId)) {
+      if (item.topic && !this.unackedFriendReqs?.has(item.msgId)) {
+        this.ackMessage(item.topic, item.msgId);
+      }
+      return;
+    }
+
+    const topic = normKey(item.topic || '');
+    const data = await this.openFromTopic(topic, item.envelope).catch(() => null);
+    if (!data || typeof data !== 'object') return;
+
+    this.seenIds.add(item.msgId);
+    if (this.seenIds.size > 1000) {
+      const oldest = this.seenIds.values().next().value;
+      this.seenIds.delete(oldest);
+    }
+
+    if (data.from?.ecdhPub) rememberPeerPublicKey(data.from, data.from.ecdhPub);
+    if (data.user?.ecdhPub) rememberPeerPublicKey(data.user, data.user.ecdhPub);
+    if (data.fromUser?.ecdhPub) rememberPeerPublicKey(data.fromUser, data.fromUser.ecdhPub);
+
+    const senderId = item.senderPeerId || data.senderPeerId;
+    if (senderId && senderId === this.me?.peerId) return;
+
+    data.msgId = item.msgId;
+    data._relayTopic = topic;
+
+    if (!this.unackedFriendReqs) this.unackedFriendReqs = new Set();
+    if (data.type === 'friend:request') {
+      this.unackedFriendReqs.add(item.msgId);
+    }
+
+    await this.onEvent?.(data, topic);
+
+    // Keep `friend:request` in Zyntra's 7-day mailbox until explicitly accepted/declined;
+    // acknowledge all other delivered events immediately so the mailbox stays clean.
+    if (data.type !== 'friend:request' && topic) {
+      this.ackMessage(topic, item.msgId);
+    }
+  }
+
+  ackMessage(topic, msgId) {
+    const cleanTopic = normKey(topic || '');
+    if (!msgId) return;
+    this.unackedFriendReqs?.delete(String(msgId));
+    const targetTopics = cleanTopic ? [cleanTopic] : Array.from(this.subscribedTopics);
+    if (targetTopics.length === 0) return;
+
+    if (this.wsReady && this.ws?.readyState === 1) {
+      try {
+        this.ws.send(
+          JSON.stringify({
+            op: 'ack',
+            topics: targetTopics,
+            msgIds: [String(msgId)],
+          })
+        );
+        return;
+      } catch {
+        // queue for HTTP poll ack below
+      }
+    }
+
+    for (const t of targetTopics) {
+      const set = this.pendingAckByTopic.get(t) || new Set();
+      set.add(String(msgId));
+      this.pendingAckByTopic.set(t, set);
+    }
+  }
+
+  async pollHttpFallback() {
+    if (this.destroyed || !this.me) return;
+    const topics = Array.from(this.subscribedTopics).slice(0, 24);
+    if (topics.length === 0) return;
+
+    const ackMsgIds = [];
+    for (const set of this.pendingAckByTopic.values()) {
+      for (const id of set) ackMsgIds.push(id);
+    }
+    this.pendingAckByTopic.clear();
+
+    try {
+      const res = await fetch(`${ZYNTRA_HTTP_BASE}/poll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          peerId: this.me.peerId || '',
+          pseudo: normTopicKey(this.me.username || ''),
+          topics,
+          sinceTs: 0,
+          ackMsgIds,
+        }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.ok) {
+        if (!this.httpAlive) {
+          this.httpAlive = true;
+          this.emitStatus();
+        }
+        for (const msg of data.messages || []) {
+          await this.handleDeliveredItem(msg);
+        }
+      }
+    } catch {
+      if (this.httpAlive) {
+        this.httpAlive = false;
+        this.emitStatus();
+      }
+    }
+  }
+
+  async publish(topic, payloadObj, opts = {}) {
+    const cleanTopic = normKey(topic);
+    if (!cleanTopic || !this.me) return 0;
+
+    const msgId =
+      (typeof crypto !== 'undefined' && crypto.randomUUID?.()) ||
+      `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+    const inner = {
       ...payloadObj,
-      msgId:
-        (typeof crypto !== 'undefined' && crypto.randomUUID?.()) ||
-        `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-      senderPeerId: this.me?.peerId,
+      msgId,
+      senderPeerId: this.me.peerId,
       ts: Date.now(),
     };
-    const encrypted = await encryptEnvelope(envelope);
-    const pkt = buildPublishPacket(topic, encrypted);
-    let sent = 0;
-    for (const e of this.sockets.values()) {
-      if (e.ready && e.ws.readyState === 1) {
-        try {
-          e.ws.send(pkt);
-          sent += 1;
-        } catch {
-          // ignore
-        }
+
+    const envelope = await this.sealForTopic(cleanTopic, inner, opts.remoteEcdhPub || null);
+    const storeOffline = opts.storeOffline !== false;
+    const ttlSec = opts.ttlSec || 604800;
+
+    if (this.wsReady && this.ws?.readyState === 1) {
+      try {
+        this.ws.send(
+          JSON.stringify({
+            op: 'publish',
+            msgId,
+            senderPeerId: this.me.peerId,
+            topics: [cleanTopic],
+            storeOffline,
+            ttlSec,
+            envelope,
+          })
+        );
+        return 1;
+      } catch {
+        // fallback to HTTP publish below
       }
     }
-    return sent;
+
+    try {
+      const res = await fetch(`${ZYNTRA_HTTP_BASE}/publish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          msgId,
+          senderPeerId: this.me.peerId,
+          topics: [cleanTopic],
+          storeOffline,
+          ttlSec,
+          envelope,
+        }),
+      });
+      if (res.ok) {
+        if (!this.httpAlive) {
+          this.httpAlive = true;
+          this.emitStatus();
+        }
+        return 1;
+      }
+    } catch {
+      // ignore offline
+    }
+    return 0;
   }
 
-  announcePresence() {
-    if (!this.me) return;
-    this.publish('mashvoice/v4/presence', {
-      type: 'presence:hello',
-      user: this.me,
-    });
+  async checkPresence(rawPseudo) {
+    const key = normTopicKey(rawPseudo);
+    if (!key) return null;
+    try {
+      const res = await fetch(`${ZYNTRA_HTTP_BASE}/presence/${encodeURIComponent(key)}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
   }
 
   async sendFriendRequest(targetQuery) {
     if (!this.me) return 0;
     const key = normTopicKey(targetQuery);
     if (!key) return 0;
-    return this.publish(`mashvoice/v4/inbox/${key}`, {
-      type: 'friend:request',
-      from: this.me,
-    });
-  }
-
-  async sendFriendRequestByIp(rawIp) {
-    if (!this.me) return 0;
-    const ip = normTopicKey(extractCleanIp(rawIp));
-    if (!ip || ip === '127.0.0.1' || ip === 'localhost') return 0;
-    return this.publish(`mashvoice/v4/ip/${ip}`, {
-      type: 'friend:request',
-      from: this.me,
-    });
+    const selfWithPub = await this.enrichSelfProfile();
+    return this.publish(
+      `inbox:${key}`,
+      {
+        type: 'friend:request',
+        from: selfWithPub,
+      },
+      { storeOffline: true, ttlSec: 604800 }
+    );
   }
 
   async sendFriendAccept(targetUser) {
     if (!this.me || !targetUser) return 0;
+    const selfWithPub = await this.enrichSelfProfile();
+    const remotePub = lookupPeerPublicKey(targetUser);
     const pid = normTopicKey(targetUser.peerId);
     const uid = normTopicKey(targetUser.id);
-    if (pid) {
-      await this.publish(`mashvoice/v4/inbox/${pid}`, {
-        type: 'friend:accept',
-        from: this.me,
-      });
-    }
-    if (uid) {
-      await this.publish(`mashvoice/v4/uid/${uid}`, {
-        type: 'friend:accept',
-        from: this.me,
-      });
+    const uname = normTopicKey(targetUser.username);
+
+    const targets = new Set();
+    if (pid) targets.add(`inbox:${pid}`);
+    if (uid) targets.add(`inbox:${uid}`);
+    if (uname) targets.add(`inbox:${uname}`);
+
+    for (const t of targets) {
+      await this.publish(
+        t,
+        {
+          type: 'friend:accept',
+          from: selfWithPub,
+        },
+        { storeOffline: true, ttlSec: 604800, remoteEcdhPub: remotePub }
+      );
     }
     return 1;
   }
 
   async sendDirectMessage(targetUser, channelId, message) {
-    if (!targetUser) return;
-    const uid = normTopicKey(targetUser.id);
+    if (!targetUser || !this.me) return;
+    const selfWithPub = await this.enrichSelfProfile();
+    const remotePub = lookupPeerPublicKey(targetUser);
     const pid = normTopicKey(targetUser.peerId);
+    const uid = normTopicKey(targetUser.id);
     const packet = {
       type: 'dm:message',
-      from: this.me,
+      from: selfWithPub,
       channelId,
       message,
     };
-    if (uid) await this.publish(`mashvoice/v4/uid/${uid}`, packet);
-    else if (pid) await this.publish(`mashvoice/v4/inbox/${pid}`, packet);
+    const topic = pid ? `inbox:${pid}` : uid ? `inbox:${uid}` : null;
+    if (topic) {
+      await this.publish(topic, packet, {
+        storeOffline: true,
+        ttlSec: 604800,
+        remoteEcdhPub: remotePub,
+      });
+    }
   }
 
   async sendServerMessage(serverId, channelId, message) {
-    if (!serverId) return;
-    await this.publish(`mashvoice/v4/srv/${normTopicKey(serverId)}`, {
-      type: 'srv:message',
-      from: this.me,
-      serverId,
-      channelId,
-      message,
-    });
+    if (!serverId || !this.me) return;
+    const selfWithPub = await this.enrichSelfProfile();
+    await this.publish(
+      `srv:${normTopicKey(serverId)}`,
+      {
+        type: 'srv:message',
+        from: selfWithPub,
+        serverId,
+        channelId,
+        message,
+      },
+      { storeOffline: true, ttlSec: 604800 }
+    );
   }
 
   async requestJoinServerByInvite(inviteCode) {
     if (!this.me || !inviteCode) return;
     const code = String(inviteCode).trim().toUpperCase();
-    await this.publish(`mashvoice/v4/invite/${normTopicKey(code)}`, {
-      type: 'srv:join-request',
-      inviteCode: code,
-      from: this.me,
-    });
+    const invTopic = normKey(`invite:${normTopicKey(code)}`);
+    this.serverSecrets.set(invTopic, code);
+    const selfWithPub = await this.enrichSelfProfile();
+    await this.publish(
+      invTopic,
+      {
+        type: 'srv:join-request',
+        inviteCode: code,
+        from: selfWithPub,
+      },
+      { storeOffline: true, ttlSec: 86400 }
+    );
   }
 
   async sendServerSnapshotToPeer(targetUser, server) {
-    if (!targetUser || !server) return;
+    if (!targetUser || !server || !this.me) return;
+    const selfWithPub = await this.enrichSelfProfile();
+    const remotePub = lookupPeerPublicKey(targetUser);
+    const pid = normTopicKey(targetUser.peerId);
     const uid = normTopicKey(targetUser.id);
-    if (uid) {
-      await this.publish(`mashvoice/v4/uid/${uid}`, {
-        type: 'srv:welcome',
-        server,
-        from: this.me,
-      });
+    const topic = pid ? `inbox:${pid}` : uid ? `inbox:${uid}` : null;
+    if (topic) {
+      await this.publish(
+        topic,
+        {
+          type: 'srv:welcome',
+          server,
+          from: selfWithPub,
+        },
+        { storeOffline: true, ttlSec: 604800, remoteEcdhPub: remotePub }
+      );
     }
   }
 
   async ringPeerForCall(targetUser, roomId) {
-    if (!targetUser || !roomId) return;
+    if (!targetUser || !roomId || !this.me) return;
+    const selfWithPub = await this.enrichSelfProfile();
+    const remotePub = lookupPeerPublicKey(targetUser);
+    const pid = normTopicKey(targetUser.peerId);
     const uid = normTopicKey(targetUser.id);
-    if (uid) {
-      await this.publish(`mashvoice/v4/uid/${uid}`, {
-        type: 'call:ring',
-        from: this.me,
-        roomId,
-      });
+    const topic = pid ? `inbox:${pid}` : uid ? `inbox:${uid}` : null;
+    if (topic) {
+      await this.publish(
+        topic,
+        {
+          type: 'call:ring',
+          from: selfWithPub,
+          roomId,
+        },
+        { storeOffline: true, ttlSec: 90, remoteEcdhPub: remotePub }
+      );
     }
   }
 
   async broadcastRoomEvent(roomId, eventType, extra = {}) {
     if (!roomId || !this.me) return;
-    await this.publish(`mashvoice/v4/room/${normTopicKey(roomId)}`, {
-      type: eventType,
-      roomId,
-      peerKey: this.me.peerId,
-      user: this.me,
-      ...extra,
-    });
+    const selfWithPub = await this.enrichSelfProfile();
+    await this.publish(
+      `room:${normTopicKey(roomId)}`,
+      {
+        type: eventType,
+        roomId,
+        peerKey: this.me.peerId,
+        user: selfWithPub,
+        ...extra,
+      },
+      { storeOffline: false }
+    );
   }
 
   async sendWebRtcSignal(targetPeerKey, roomId, signal) {
     if (!targetPeerKey || !this.me) return;
+    const selfWithPub = await this.enrichSelfProfile();
+    const remotePub = lookupPeerPublicKey(targetPeerKey);
     const pid = normTopicKey(targetPeerKey);
-    await this.publish(`mashvoice/v4/signal/${pid}`, {
-      type: 'webrtc:signal',
-      fromPeerKey: this.me.peerId,
-      fromUser: this.me,
-      roomId,
-      signal,
-    });
+    await this.publish(
+      `inbox:${pid}`,
+      {
+        type: 'webrtc:signal',
+        fromPeerKey: this.me.peerId,
+        fromUser: selfWithPub,
+        roomId,
+        signal,
+      },
+      { storeOffline: false, remoteEcdhPub: remotePub }
+    );
   }
 
   destroy() {
     this.destroyed = true;
     if (this.pingTimer) clearInterval(this.pingTimer);
-    for (const e of this.sockets.values()) {
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.ws) {
       try {
-        e.ws.close();
+        this.ws.close();
       } catch {
         // ignore
       }
+      this.ws = null;
     }
-    this.sockets.clear();
   }
 }

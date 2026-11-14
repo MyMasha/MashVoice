@@ -60,17 +60,11 @@ fn vault_get(state: State<'_, Arc<AppState>>) -> Value {
     json!({
         "connectionToken": v["connectionToken"].as_str().unwrap_or(""),
         "savedUsername": v["savedUsername"].as_str().unwrap_or(""),
-        "hasGithubToken": v["githubReadOnlyToken"].as_str().map(|s| !s.is_empty()).unwrap_or(false),
     })
 }
 
 #[tauri::command]
 fn vault_set(state: State<'_, Arc<AppState>>, patch: Value) -> Result<Value, String> {
-    if let Some(gh_tok) = patch["githubReadOnlyToken"].as_str() {
-        state
-            .updater
-            .update_settings(Some(gh_tok.to_string()), None, None, None);
-    }
     state.security.write_encrypted_vault(patch)?;
     Ok(json!({ "ok": true }))
 }
@@ -94,10 +88,16 @@ pub fn run() {
             let (router, app_state) = build_router(&data_dir, None);
             app.manage(Arc::clone(&app_state));
 
-            // Bind synchronously on 0.0.0.0:3080 (with automatic free-port fallback if 3080 is busy)
-            // so friends on LAN / VPN / Port-Forward can join this P2P host, and WebView2 connects via 127.0.0.1.
-            let std_listener = StdTcpListener::bind(("0.0.0.0", 3080))
-                .or_else(|_| StdTcpListener::bind(("0.0.0.0", 0)))?;
+            // Bind strictly on 127.0.0.1 loopback by default (Zero-IP P2P runs over wss://zyntra.win)
+            // so no local port is exposed on public Wi-Fi and Windows Firewall never prompts.
+            let bind_host = if std::env::var("MASHVOICE_BIND_PUBLIC").unwrap_or_default() == "true"
+            {
+                "0.0.0.0"
+            } else {
+                "127.0.0.1"
+            };
+            let std_listener = StdTcpListener::bind((bind_host, 3080))
+                .or_else(|_| StdTcpListener::bind((bind_host, 0)))?;
             std_listener.set_nonblocking(true)?;
             let port = std_listener.local_addr().map(|a| a.port()).unwrap_or(3080);
             app_state.set_listen_port(port);

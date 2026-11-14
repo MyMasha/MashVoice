@@ -7,10 +7,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   publish-tauri:
+    if: github.repository == 'MyMasha/MashVoice'
+    permissions:
+      contents: write
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,17 +31,16 @@ jobs:
       - name: Install UI dependencies
         run: npm install
 
-      - name: Build & Publish Rust Tauri v2 Windows Release (.exe / .msi) + Auto-Updater Manifest
+      - name: Build & Publish Rust Tauri v2 Windows Release (.exe / .msi) + Signed Auto-Updater
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MASHVOICE_BUILD_UPDATER_TOKEN: ${{ secrets.MASHVOICE_UPDATER_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           tagName: v__VERSION__
-          releaseName: 'MashVoice Singularity v__VERSION__ (Windows x64 • Rust + Tauri v2)'
-          releaseBody: 'Release Windows x64 MashVoice Rust + Tauri v2 (.exe setup, .exe portable & .msi) avec Auto-Updater signé.'
+          releaseName: 'MashVoice Singularity v__VERSION__ (Windows x64 • Zero-IP Zyntra Relay)'
+          releaseBody: 'Release Open-Source Windows x64 MashVoice Rust + Tauri v2 (.exe setup, .exe portable & .msi) — Relais Zero-IP Zyntra (mv-relay-v1), chiffrement E2EE ECDH P-256 + AES-256-GCM et Auto-Updater signé Ed25519.'
           releaseDraft: false
           prerelease: false
           uploadPlainBinary: true

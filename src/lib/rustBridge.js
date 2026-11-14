@@ -2,11 +2,19 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 
 /**
- * Bridge between MashVoice UI and the Native Rust Engine (Tauri v2 IPC + Rust Axum Telemetry)
+ * Bridge between MashVoice UI and the Native Local Rust Engine (Tauri v2 IPC + Loopback Axum).
+ * External relay traffic (`https://zyntra.win` & `wss://zyntra.win`) passes directly untouched.
  */
 export function installRustBridge() {
   if (typeof window === 'undefined') return;
   if (window.mashNative) return;
+
+  // Purge any legacy IP remote-node override from older versions
+  try {
+    localStorage.removeItem('mashvoice.remoteNodeUrl');
+  } catch {
+    // ignore
+  }
 
   const isTauri = Boolean(
     window.__TAURI_INTERNALS__ ||
@@ -17,24 +25,9 @@ export function installRustBridge() {
   if (isTauri) {
     let localApiOrigin = window.__MASH_API_ORIGIN__ || 'http://127.0.0.1:3080';
     let localWsOrigin = window.__MASH_WS_ORIGIN__ || 'ws://127.0.0.1:3080';
-    let remoteNodeHttp = (localStorage.getItem('mashvoice.remoteNodeUrl') || '').trim();
 
-    const normalizeRemote = (raw) => {
-      const s = (raw || '').trim().replace(/\/+$/, '');
-      if (!s) return '';
-      if (/^https?:\/\//i.test(s)) return s;
-      return `http://${s.includes(':') ? s : `${s}:3080`}`;
-    };
-    remoteNodeHttp = normalizeRemote(remoteNodeHttp);
-
-    const resolveApiOrigin = () =>
-      remoteNodeHttp || window.__MASH_API_ORIGIN__ || localApiOrigin;
-    const resolveWsOrigin = () => {
-      if (remoteNodeHttp) {
-        return remoteNodeHttp.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
-      }
-      return window.__MASH_WS_ORIGIN__ || localWsOrigin;
-    };
+    const resolveApiOrigin = () => window.__MASH_API_ORIGIN__ || localApiOrigin;
+    const resolveWsOrigin = () => window.__MASH_WS_ORIGIN__ || localWsOrigin;
 
     const backendReady = invoke('get_backend_url')
       .then((info) => {
@@ -43,7 +36,8 @@ export function installRustBridge() {
       })
       .catch(() => {});
 
-    // Rewrite relative /api/... calls to either local Rust server or friend's P2P host
+    // Rewrite relative /api/... calls strictly to local loopback Rust engine;
+    // external HTTPS URLs (e.g. https://zyntra.win/api/mashvoice/*) pass straight through.
     const nativeFetch = window.fetch.bind(window);
     window.fetch = async (input, init) => {
       await backendReady;
@@ -60,20 +54,27 @@ export function installRustBridge() {
       return nativeFetch(input, init);
     };
 
-    // Rewrite WebSocket /ws... to local Rust server or friend's P2P host
+    // Rewrite local /ws strictly to local loopback Rust engine;
+    // external WSS URLs (e.g. wss://zyntra.win/api/mashvoice/ws) pass straight through.
     const NativeWebSocket = window.WebSocket;
     const PatchedWebSocket = function (url, protocols) {
       let target = String(url);
       const curWs = resolveWsOrigin();
-      const isLocalWs =
-        !target.includes('/ws-p2p') &&
-        (target.startsWith('/ws') ||
+      const isExternalRelay =
+        /^wss?:\/\//i.test(target) &&
+        !target.includes('tauri.localhost') &&
+        !(window.location?.host && target.includes(window.location.host));
+
+      if (!isExternalRelay) {
+        const isLocalWs =
+          target.startsWith('/ws') ||
           target.includes('tauri.localhost/ws') ||
-          (window.location?.host && target.includes(`${window.location.host}/ws`)));
-      if (isLocalWs) {
-        const idx = target.indexOf('/ws');
-        if (idx !== -1) {
-          target = `${curWs}${target.slice(idx)}`;
+          (window.location?.host && target.includes(`${window.location.host}/ws`));
+        if (isLocalWs) {
+          const idx = target.indexOf('/ws');
+          if (idx !== -1) {
+            target = `${curWs}${target.slice(idx)}`;
+          }
         }
       }
       return protocols !== undefined
@@ -90,16 +91,6 @@ export function installRustBridge() {
     window.mashNative = {
       isTauri: true,
       isElectron: true, // enables custom frameless Singularity window controls
-      getRemoteNode: () => remoteNodeHttp,
-      setRemoteNode: (url) => {
-        remoteNodeHttp = normalizeRemote(url);
-        if (remoteNodeHttp) {
-          localStorage.setItem('mashvoice.remoteNodeUrl', remoteNodeHttp);
-        } else {
-          localStorage.removeItem('mashvoice.remoteNodeUrl');
-        }
-        return remoteNodeHttp;
-      },
       windowControl: (action) => invoke('window_control', { action }),
       getHardwareInfo: () => invoke('get_hardware_info'),
       saveHardwareConfig: (patch) => invoke('save_hardware_config', { patch }),
@@ -116,7 +107,6 @@ export function installRustBridge() {
       },
     };
   } else {
-    // Web / Remote Preview mode connected directly to the Rust Axum P2P Engine
     window.mashNative = {
       isTauri: false,
       isElectron: false,

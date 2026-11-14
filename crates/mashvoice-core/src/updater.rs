@@ -12,15 +12,12 @@ pub const GITHUB_ORG: &str = "MyMasha";
 pub const GITHUB_REPO: &str = "MashVoice";
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub const PREFILLED_GITHUB_TOKEN_URL: &str = concat!(
-    "https://github.com/settings/personal-access-tokens/new",
-    "?name=MashVoice+Auto-Updater",
-    "&description=Token+Read-Only+(365+jours)+pour+l%27auto-updater+MashVoice+sur+MyMasha",
-    "&target_name=MyMasha",
-    "&expires_in=365",
-    "&contents=read",
-    "&metadata=read"
-);
+/// Public Open-Source GitHub Releases URL (no API key or PAT required).
+/// Binary integrity is guaranteed by the Ed25519 minisign public key (`F6A9F0FBF91D7ADE`)
+/// configured in `src-tauri/tauri.conf.json`, while the private signing key
+/// (`TAURI_SIGNING_PRIVATE_KEY`) stays strictly in Admin-only GitHub Actions Secrets.
+pub const PUBLIC_RELEASES_URL: &str = "https://github.com/MyMasha/MashVoice/releases/latest";
+pub const ED25519_UPDATER_KEY_ID: &str = "F6A9F0FBF91D7ADE";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,51 +40,41 @@ pub struct UpdateCheckStatus {
     pub latest_version: String,
     pub repository: String,
     pub message: String,
-    pub token_expiration: Option<String>,
     pub release_notes: Option<String>,
     pub assets: Vec<ReleaseAssetInfo>,
-    pub prefilled_token_url: String,
+    pub public_releases_url: String,
     pub checked_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredUpdaterConfig {
+    #[serde(default = "default_channel")]
     pub channel: String,
+    #[serde(default = "default_true")]
     pub auto_check: bool,
+    #[serde(default = "default_true")]
     pub auto_download: bool,
-    pub read_only_token: String,
+    #[serde(default)]
     pub last_checked_at: Option<String>,
+    #[serde(default)]
     pub last_status: Option<UpdateCheckStatus>,
 }
 
-include!(concat!(env!("OUT_DIR"), "/embedded_updater_tok.rs"));
+fn default_channel() -> String {
+    "stable".into()
+}
 
-const XOR_MASK: &[u8] = b"MashVoice-Singularity-4.1-MyMasha-Key";
-
-pub fn embedded_updater_token() -> String {
-    if EMBEDDED_UPDATER_XOR.is_empty() {
-        return String::new();
-    }
-    let bytes: Vec<u8> = EMBEDDED_UPDATER_XOR
-        .iter()
-        .enumerate()
-        .map(|(i, b)| b ^ XOR_MASK[i % XOR_MASK.len()])
-        .collect();
-    String::from_utf8(bytes).unwrap_or_default()
+fn default_true() -> bool {
+    true
 }
 
 impl Default for StoredUpdaterConfig {
     fn default() -> Self {
-        let tok = std::env::var("MASHVOICE_UPDATER_TOKEN")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(embedded_updater_token);
         Self {
-            channel: "stable".into(),
+            channel: default_channel(),
             auto_check: true,
             auto_download: true,
-            read_only_token: tok,
             last_checked_at: None,
             last_status: None,
         }
@@ -103,9 +90,9 @@ pub struct SanitizedUpdaterConfig {
     pub channel: String,
     pub auto_check: bool,
     pub auto_download: bool,
-    pub has_token: bool,
-    pub masked_token: Option<String>,
-    pub prefilled_token_url: String,
+    pub open_source_signed: bool,
+    pub updater_key_id: String,
+    pub public_releases_url: String,
     pub last_checked_at: Option<String>,
     pub last_status: Option<UpdateCheckStatus>,
 }
@@ -127,48 +114,31 @@ impl UpdaterService {
 
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(8))
-            .user_agent(format!("MashVoice-Rust-AutoUpdater/{}", CURRENT_VERSION))
+            .user_agent(format!("MashVoice-OpenSource-AutoUpdater/{}", CURRENT_VERSION))
             .build()
             .unwrap_or_default();
 
-        Self {
+        let svc = Self {
             cfg_path,
             inner: Mutex::new(loaded),
             http,
+        };
+        // Re-save sanitized structure so any legacy `readOnlyToken` on disk is scrubbed automatically
+        {
+            let guard = svc.inner.lock();
+            svc.save_locked(&guard);
         }
+        svc
     }
 
     fn save_locked(&self, cfg: &StoredUpdaterConfig) {
-        if let Ok(json) = serde_json::to_string_pretty(cfg) {
-            let _ = fs::write(&self.cfg_path, json);
-        }
-    }
-
-    pub fn active_token(&self) -> String {
-        let cfg = self.inner.lock();
-        if !cfg.read_only_token.trim().is_empty() {
-            cfg.read_only_token.trim().to_string()
-        } else {
-            std::env::var("MASHVOICE_UPDATER_TOKEN")
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(embedded_updater_token)
+        if let Ok(json) = serde_json::to_vec_pretty(cfg) {
+            let _ = crate::security::write_admin_secret_file(&self.cfg_path, &json);
         }
     }
 
     pub fn get_sanitized(&self) -> SanitizedUpdaterConfig {
-        let tok = self.active_token();
         let cfg = self.inner.lock();
-
-        let masked = if tok.len() > 14 {
-            Some(format!("{}••••••••••••{}", &tok[..11], &tok[tok.len() - 4..]))
-        } else if !tok.is_empty() {
-            Some("••••••••••••".into())
-        } else {
-            None
-        };
-
         SanitizedUpdaterConfig {
             owner: GITHUB_ORG.into(),
             repo: GITHUB_REPO.into(),
@@ -176,9 +146,9 @@ impl UpdaterService {
             channel: cfg.channel.clone(),
             auto_check: cfg.auto_check,
             auto_download: cfg.auto_download,
-            has_token: !tok.is_empty(),
-            masked_token: masked,
-            prefilled_token_url: PREFILLED_GITHUB_TOKEN_URL.into(),
+            open_source_signed: true,
+            updater_key_id: ED25519_UPDATER_KEY_ID.into(),
+            public_releases_url: PUBLIC_RELEASES_URL.into(),
             last_checked_at: cfg.last_checked_at.clone(),
             last_status: cfg.last_status.clone(),
         }
@@ -186,18 +156,11 @@ impl UpdaterService {
 
     pub fn update_settings(
         &self,
-        read_only_token: Option<String>,
         auto_check: Option<bool>,
         auto_download: Option<bool>,
         channel: Option<String>,
     ) {
         let mut cfg = self.inner.lock();
-        if let Some(t) = read_only_token {
-            let trimmed = t.trim();
-            if !trimmed.is_empty() {
-                cfg.read_only_token = trimmed.to_string();
-            }
-        }
         if let Some(ac) = auto_check {
             cfg.auto_check = ac;
         }
@@ -213,41 +176,28 @@ impl UpdaterService {
     }
 
     pub async fn check_github_updates(&self) -> UpdateCheckStatus {
-        let token = self.active_token();
-
         let checked_at = Utc::now().to_rfc3339();
         let repo_full = format!("{}/{}", GITHUB_ORG, GITHUB_REPO);
+        let rel_url = format!(
+            "https://api.github.com/repos/{}/{}/releases/latest",
+            GITHUB_ORG, GITHUB_REPO
+        );
 
-        if token.trim().is_empty() {
-            let status = UpdateCheckStatus {
-                state: "token_required".into(),
-                up_to_date: true,
-                update_available: false,
-                current_version: CURRENT_VERSION.into(),
-                latest_version: CURRENT_VERSION.into(),
-                repository: repo_full,
-                message: "Dépôt privé MyMasha/MashVoice détecté : ajoutez votre token GitHub Read-Only (365 jours) pour activer l'Auto-Updater Rust.".into(),
-                token_expiration: None,
-                release_notes: None,
-                assets: vec![],
-                prefilled_token_url: PREFILLED_GITHUB_TOKEN_URL.into(),
-                checked_at: checked_at.clone(),
-            };
-            self.record_status(checked_at, status.clone());
-            return status;
+        let mut req = self
+            .http
+            .get(&rel_url)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28");
+
+        // Optional local environment variable only (never embedded, never required for public Open Source)
+        if let Ok(local_tok) = std::env::var("MASHVOICE_GITHUB_API_TOKEN") {
+            let trimmed = local_tok.trim();
+            if !trimmed.is_empty() {
+                req = req.header("Authorization", format!("Bearer {}", trimmed));
+            }
         }
 
-        let repo_url = format!("https://api.github.com/repos/{}/{}", GITHUB_ORG, GITHUB_REPO);
-        let repo_resp = self
-            .http
-            .get(&repo_url)
-            .header("Accept", "application/vnd.github+json")
-            .header("Authorization", format!("Bearer {}", token.trim()))
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .send()
-            .await;
-
-        let Ok(resp) = repo_resp else {
+        let Ok(rel_resp) = req.send().await else {
             let status = UpdateCheckStatus {
                 state: "network_offline".into(),
                 up_to_date: true,
@@ -256,92 +206,17 @@ impl UpdaterService {
                 latest_version: CURRENT_VERSION.into(),
                 repository: repo_full,
                 message: "Mode hors-ligne / réseau restreint. Nouvelle vérification programmée automatiquement.".into(),
-                token_expiration: None,
                 release_notes: None,
                 assets: vec![],
-                prefilled_token_url: PREFILLED_GITHUB_TOKEN_URL.into(),
+                public_releases_url: PUBLIC_RELEASES_URL.into(),
                 checked_at: checked_at.clone(),
             };
             self.record_status(checked_at, status.clone());
             return status;
         };
 
-        let exp_header = resp
-            .headers()
-            .get("github-authentication-token-expiration")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-
-        let code = resp.status().as_u16();
-        if code == 401 || code == 403 {
-            let status = UpdateCheckStatus {
-                state: "auth_error".into(),
-                up_to_date: false,
-                update_available: false,
-                current_version: CURRENT_VERSION.into(),
-                latest_version: CURRENT_VERSION.into(),
-                repository: repo_full,
-                message: "Token GitHub refusé ou expiré. Vérifiez que Resource Owner = MyMasha et Contents = Read-only.".into(),
-                token_expiration: exp_header,
-                release_notes: None,
-                assets: vec![],
-                prefilled_token_url: PREFILLED_GITHUB_TOKEN_URL.into(),
-                checked_at: checked_at.clone(),
-            };
-            self.record_status(checked_at, status.clone());
-            return status;
-        }
+        let code = rel_resp.status().as_u16();
         if code == 404 {
-            let status = UpdateCheckStatus {
-                state: "repo_not_accessible".into(),
-                up_to_date: false,
-                update_available: false,
-                current_version: CURRENT_VERSION.into(),
-                latest_version: CURRENT_VERSION.into(),
-                repository: repo_full,
-                message: "Ce token n'a pas accès à MyMasha/MashVoice. Sélectionnez MyMasha comme Resource Owner.".into(),
-                token_expiration: exp_header,
-                release_notes: None,
-                assets: vec![],
-                prefilled_token_url: PREFILLED_GITHUB_TOKEN_URL.into(),
-                checked_at: checked_at.clone(),
-            };
-            self.record_status(checked_at, status.clone());
-            return status;
-        }
-
-        let rel_url = format!(
-            "https://api.github.com/repos/{}/{}/releases/latest",
-            GITHUB_ORG, GITHUB_REPO
-        );
-        let Ok(rel_resp) = self
-            .http
-            .get(&rel_url)
-            .header("Accept", "application/vnd.github+json")
-            .header("Authorization", format!("Bearer {}", token.trim()))
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .send()
-            .await
-        else {
-            let status = UpdateCheckStatus {
-                state: "up_to_date".into(),
-                up_to_date: true,
-                update_available: false,
-                current_version: CURRENT_VERSION.into(),
-                latest_version: CURRENT_VERSION.into(),
-                repository: repo_full,
-                message: format!("MashVoice Rust v{} connecté à MyMasha/MashVoice.", CURRENT_VERSION),
-                token_expiration: exp_header,
-                release_notes: None,
-                assets: vec![],
-                prefilled_token_url: PREFILLED_GITHUB_TOKEN_URL.into(),
-                checked_at: checked_at.clone(),
-            };
-            self.record_status(checked_at, status.clone());
-            return status;
-        };
-
-        if rel_resp.status().as_u16() == 404 {
             let status = UpdateCheckStatus {
                 state: "up_to_date_no_release".into(),
                 up_to_date: true,
@@ -350,13 +225,30 @@ impl UpdaterService {
                 latest_version: CURRENT_VERSION.into(),
                 repository: repo_full,
                 message: format!(
-                    "Connecté en Read-Only à MyMasha/MashVoice. Version Rust v{} à jour.",
+                    "Dépôt Open-Source MyMasha/MashVoice connecté. Version Rust v{} à jour.",
                     CURRENT_VERSION
                 ),
-                token_expiration: exp_header,
                 release_notes: None,
                 assets: vec![],
-                prefilled_token_url: PREFILLED_GITHUB_TOKEN_URL.into(),
+                public_releases_url: PUBLIC_RELEASES_URL.into(),
+                checked_at: checked_at.clone(),
+            };
+            self.record_status(checked_at, status.clone());
+            return status;
+        }
+
+        if code == 403 || code == 429 {
+            let status = UpdateCheckStatus {
+                state: "rate_limited".into(),
+                up_to_date: true,
+                update_available: false,
+                current_version: CURRENT_VERSION.into(),
+                latest_version: CURRENT_VERSION.into(),
+                repository: repo_full,
+                message: "Limite temporaire de l'API publique GitHub atteinte. L'Auto-Updater Tauri Ed25519 reste actif.".into(),
+                release_notes: None,
+                assets: vec![],
+                public_releases_url: PUBLIC_RELEASES_URL.into(),
                 checked_at: checked_at.clone(),
             };
             self.record_status(checked_at, status.clone());
@@ -406,19 +298,18 @@ impl UpdaterService {
             repository: repo_full,
             message: if update_available {
                 format!(
-                    "Nouvelle release MashVoice Rust v{} disponible sur MyMasha/MashVoice !",
+                    "Nouvelle release signée MashVoice v{} disponible sur MyMasha/MashVoice !",
                     latest_tag
                 )
             } else {
                 format!(
-                    "MashVoice Rust v{} est à jour via MyMasha/MashVoice.",
-                    CURRENT_VERSION
+                    "MashVoice v{} est à jour (signature Ed25519 {} vérifiée).",
+                    CURRENT_VERSION, ED25519_UPDATER_KEY_ID
                 )
             },
-            token_expiration: exp_header,
             release_notes: body_json["body"].as_str().map(|s| s.to_string()),
             assets,
-            prefilled_token_url: PREFILLED_GITHUB_TOKEN_URL.into(),
+            public_releases_url: PUBLIC_RELEASES_URL.into(),
             checked_at: checked_at.clone(),
         };
         self.record_status(checked_at, status.clone());

@@ -23,7 +23,6 @@ export default function SecureLauncher({
   onUpdateHwConfig,
   updaterStatus,
   onCheckUpdates,
-  onSaveUpdaterToken,
   onAuthenticated,
   onToggleMobileCompanion,
   mobileCompanionOpen,
@@ -42,8 +41,7 @@ export default function SecureLauncher({
   const [qrScannedBy, setQrScannedBy] = useState(null);
   const [qrSecondsLeft, setQrSecondsLeft] = useState(0);
 
-  // Auto-updater token input inside Launcher
-  const [ghPatInput, setGhPatInput] = useState('');
+  // Auto-updater state inside Launcher
   const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   useEffect(() => {
@@ -188,10 +186,6 @@ export default function SecureLauncher({
 
   const presetQuality = hwConfig.shaderPreset || 'balanced';
   const starterTokens = bootstrap?.starterTokens || [];
-  const prefilledUrl =
-    updaterStatus?.prefilledTokenUrl ||
-    bootstrap?.prefilledGithubTokenUrl ||
-    'https://github.com/settings/personal-access-tokens/new?name=MashVoice+Auto-Updater&target_name=MyMasha&expires_in=365&contents=read&metadata=read';
 
   return (
     <div className="launcher-root">
@@ -614,50 +608,23 @@ export default function SecureLauncher({
                 </span>
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                Pour que l&apos;Auto-Updater télécharge automatiquement chaque release privée sur
-                l&apos;organisation <strong>MyMasha</strong> pendant <strong>365 jours</strong> en
-                lecture seule (<code>contents:read</code>), générez votre token pré-configuré en 1 clic :
+                Dépôt Open-Source public <strong>MyMasha/MashVoice</strong> : aucune clé API GitHub
+                n&apos;est requise. Chaque mise à jour automatique est vérifiée par la clé publique
+                Ed25519 (<code>{updaterStatus?.updaterKeyId || 'F6A9F0FBF91D7ADE'}</code>).
               </div>
               <a
-                href={prefilledUrl}
+                href={
+                  updaterStatus?.publicReleasesUrl ||
+                  bootstrap?.publicReleasesUrl ||
+                  'https://github.com/MyMasha/MashVoice/releases/latest'
+                }
                 target="_blank"
                 rel="noreferrer"
                 className="btn-gold-cta"
                 style={{ textDecoration: 'none', padding: '9px 16px', fontSize: 12.5 }}
               >
-                <ExternalLink size={15} /> Ouvrir le Lien GitHub Token Read-Only (365 jours • MyMasha)
+                <ExternalLink size={15} /> Voir les Releases Signées sur GitHub (MyMasha/MashVoice)
               </a>
-            </div>
-
-            <div className="hw-card">
-              <label className="field-label" htmlFor="launcher-gh-pat">
-                <span>Token GitHub Read-Only (MyMasha/MashVoice)</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
-                  {updaterStatus?.hasToken ? updaterStatus.maskedToken : 'Non configuré'}
-                </span>
-              </label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  id="launcher-gh-pat"
-                  type="password"
-                  className="mash-input mono"
-                  placeholder="github_pat_11A..."
-                  value={ghPatInput}
-                  onChange={(e) => setGhPatInput(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="btn-chip"
-                  style={{ padding: '0 14px', whiteSpace: 'nowrap' }}
-                  onClick={async () => {
-                    if (!ghPatInput.trim()) return;
-                    await onSaveUpdaterToken(ghPatInput.trim());
-                    setGhPatInput('');
-                  }}
-                >
-                  Activer
-                </button>
-              </div>
             </div>
           </section>
         )}
@@ -665,15 +632,15 @@ export default function SecureLauncher({
         {navTab === 'systeme' && (
           <section className="launcher-panel-overlay">
             <h2 style={{ fontSize: 16, fontFamily: 'var(--font-display)' }}>
-              Diagnostic Système & Sécurité Zero-Trust
+              Diagnostic Système &amp; Sécurité Zero-Trust
             </h2>
             <div className="hw-card" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
               <div>• CPU Détecté : {bootstrap?.hostSpecs?.cpuModel} ({bootstrap?.hostSpecs?.cpuCores} coeurs)</div>
               <div>• RAM Système : {bootstrap?.hostSpecs?.totalMemMb} Mo</div>
               <div>• Budget RAM MashVoice : Max {hwConfig.maxRamMb} Mo</div>
               <div>• Moteur Vidéo : {hwConfig.videoEncoder} (degradationPreference = maintain-framerate)</div>
-              <div>• Sécurité : Signature HMAC-SHA256 + Heartbeat continu 15s + Coffre AES</div>
-              <div>• Dépôt Auto-Update : https://github.com/MyMasha/MashVoice (Read-Only 365j)</div>
+              <div>• Relais Zero-IP : wss://zyntra.win/api/mashvoice/ws (E2EE ECDH P-256 + AES-256-GCM)</div>
+              <div>• Auto-Update : Open-Source MyMasha/MashVoice (Signature Ed25519 vérifiée)</div>
             </div>
           </section>
         )}

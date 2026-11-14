@@ -16,7 +16,7 @@ use mashvoice_core::{
         parse_qr_payload, LoginRateLimiter, QrChallengeManager, SecurityEngine, SessionPayload,
     },
     store::{ChatMessage, CommunityServer, MashStore, UserProfile},
-    updater::{UpdaterService, CURRENT_VERSION, GITHUB_ORG, GITHUB_REPO, PREFILLED_GITHUB_TOKEN_URL},
+    updater::{UpdaterService, CURRENT_VERSION, GITHUB_ORG, GITHUB_REPO, PUBLIC_RELEASES_URL},
 };
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -431,18 +431,11 @@ fn detect_local_ips() -> Vec<String> {
     ips
 }
 
-fn detect_lan_ip() -> String {
-    detect_local_ips()
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| "127.0.0.1".into())
-}
-
 async fn api_bootstrap_public(
     State(st): State<Arc<AppState>>,
     addr: Option<ConnectInfo<SocketAddr>>,
 ) -> Json<Value> {
-    let is_local_owner = addr.map(|a| a.0.ip().is_loopback()).unwrap_or(true);
+    let is_local_owner = addr.map(|a| a.0.ip().is_loopback()).unwrap_or(false);
     let hide = !is_local_owner
         || std::env::var("MASHVOICE_HIDE_STARTER_TOKENS").unwrap_or_default() == "true";
     let starter: Vec<Value> = st
@@ -469,11 +462,10 @@ async fn api_bootstrap_public(
         "version": CURRENT_VERSION,
         "securityMode": "ZERO_TRUST_MANDATORY_TOKEN",
         "githubRepo": format!("{}/{}", GITHUB_ORG, GITHUB_REPO),
-        "prefilledGithubTokenUrl": PREFILLED_GITHUB_TOKEN_URL,
+        "publicReleasesUrl": PUBLIC_RELEASES_URL,
+        "relayEndpoint": mashvoice_core::relay::ZYNTRA_RELAY_HTTP_BASE,
+        "relayWsUrl": mashvoice_core::relay::ZYNTRA_RELAY_WS_URL,
         "hostSpecs": st.hardware.host_specs(),
-        "lanIp": detect_lan_ip(),
-        "localIps": detect_local_ips(),
-        "listenPort": st.listen_port(),
         "starterTokens": starter,
     }))
 }
@@ -756,11 +748,27 @@ async fn api_qr_approve(
     .into_response())
 }
 
+fn is_admin_tier(tier: &str) -> bool {
+    matches!(tier, "FOUNDER" | "ADMIN")
+}
+
 async fn api_security_tokens(
     State(st): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let (sess, _user) = st.extract_auth(&headers)?;
+    let is_admin = is_admin_tier(&sess.tier);
+    if !is_admin {
+        // Non-admin users must NEVER read admin/founder tokens or active peer sessions
+        return Ok(Json(json!({
+            "isAdmin": false,
+            "currentTokenJti": sess.jti,
+            "currentTier": sess.tier,
+            "tokens": [],
+            "activeSessions": [],
+        })));
+    }
+
     let active_sessions: Vec<Value> = st
         .clients
         .read()
@@ -780,6 +788,7 @@ async fn api_security_tokens(
 
     let tokens = st.store.state.read().issued_tokens.clone();
     Ok(Json(json!({
+        "isAdmin": true,
         "currentTokenJti": sess.jti,
         "currentTier": sess.tier,
         "tokens": tokens,
@@ -829,7 +838,17 @@ async fn api_security_revoke(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
-    let _ = st.extract_auth(&headers)?;
+    let (sess, _user) = st.extract_auth(&headers)?;
+    if !is_admin_tier(&sess.tier) {
+        return Ok((
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "Accès refusé : seuls les administrateurs peuvent révoquer des tokens.",
+                "code": "ADMIN_REQUIRED"
+            })),
+        )
+            .into_response());
+    }
     let Some(jti) = body["jti"].as_str() else {
         return Ok((StatusCode::BAD_REQUEST, Json(json!({ "error": "JTI requis." }))).into_response());
     };
@@ -850,10 +869,19 @@ async fn api_updater_config(
     State(st): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<Value>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let _ = st.extract_auth(&headers)?;
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let (sess, _user) = st.extract_auth(&headers)?;
+    if !is_admin_tier(&sess.tier) {
+        return Ok((
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "Accès refusé : configuration réservée aux administrateurs.",
+                "code": "ADMIN_REQUIRED"
+            })),
+        )
+            .into_response());
+    }
     st.updater.update_settings(
-        body["readOnlyToken"].as_str().map(|s| s.to_string()),
         body["autoCheck"].as_bool(),
         body["autoDownload"].as_bool(),
         body["channel"].as_str().map(|s| s.to_string()),
@@ -863,7 +891,8 @@ async fn api_updater_config(
         "ok": true,
         "config": st.updater.get_sanitized(),
         "status": status,
-    })))
+    }))
+    .into_response())
 }
 
 async fn api_updater_check(State(st): State<Arc<AppState>>) -> Json<Value> {
@@ -911,10 +940,6 @@ async fn api_workspace_state(
 
     Ok(Json(json!({
         "me": me,
-        "lanIp": detect_lan_ip(),
-        "localIps": detect_local_ips(),
-        "listenPort": st.listen_port(),
-        "activeTunnels": st.active_tunnels_summary(),
         "users": users,
         "friends": friends,
         "dmChannels": dm_channels,
@@ -962,11 +987,11 @@ async fn api_friends_add(
     Json(body): Json<Value>,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
     let (_sess, me) = st.extract_auth(&headers)?;
-    let q = body["query"].as_str().unwrap_or("").trim();
+    let q = body["query"].as_str().unwrap_or("").trim().trim_start_matches('@');
     if q.is_empty() {
         return Ok((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "Entre l'IP de ton ami (ex: 26.48.12.90:3080) ou son pseudo (ex: v0dka)." })),
+            Json(json!({ "error": "Entre uniquement le pseudo de ton ami (ex: v0dka ou v0dka#0001)." })),
         )
             .into_response());
     }
@@ -976,17 +1001,21 @@ async fn api_friends_add(
         return Ok((
             StatusCode::BAD_REQUEST,
             Json(json!({
-                "error": "Ceci est un Token de sécurité MASH-SV4 ! Entre l'IP de ton ami (ex: 26.x.x.x:3080) ou son pseudo."
+                "error": "Ceci est un Token de sécurité MASH-SV4 ! Entre uniquement le pseudo de ton ami (ex: v0dka)."
             })),
         )
             .into_response());
     }
 
-    if q_low.starts_with("127.0.0.1") || q_low.starts_with("localhost") {
+    if q_low.starts_with("127.0.0.1")
+        || q_low.starts_with("localhost")
+        || q_low.contains(":3080")
+        || q_low.split('.').count() == 4 && q_low.chars().all(|c| c.is_ascii_digit() || c == '.' || c == ':')
+    {
         return Ok((
             StatusCode::BAD_REQUEST,
             Json(json!({
-                "error": "127.0.0.1 est ton propre PC ! Entre l'IP du PC de ton ami."
+                "error": "Aucune adresse IP n'est nécessaire ! Entre simplement le pseudo de ton ami (ex: v0dka)."
             })),
         )
             .into_response());

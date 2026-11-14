@@ -105,25 +105,6 @@ export default function App() {
     return data.status;
   };
 
-  const handleSaveUpdaterToken = async (readOnlyToken) => {
-    window.mashNative?.setVault?.({ githubReadOnlyToken: readOnlyToken });
-    if (authSession?.sessionToken) {
-      const res = await fetch('/api/updater/config', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${authSession.sessionToken}`,
-        },
-        body: JSON.stringify({ readOnlyToken }),
-      });
-      const data = await res.json();
-      if (data.config) setUpdaterStatus(data.config);
-    } else {
-      // Check immediately via public check
-      await handleCheckUpdates();
-    }
-  };
-
   const handleAuthenticated = ({
     sessionToken,
     connectionToken,
@@ -178,7 +159,6 @@ export default function App() {
           onUpdateHwConfig={handleUpdateHwConfig}
           updaterStatus={updaterStatus}
           onCheckUpdates={handleCheckUpdates}
-          onSaveUpdaterToken={handleSaveUpdaterToken}
           onAuthenticated={handleAuthenticated}
           onToggleMobileCompanion={() => setMobileCompanionOpen((v) => !v)}
           mobileCompanionOpen={mobileCompanionOpen}
@@ -195,7 +175,6 @@ export default function App() {
           onUpdateHwConfig={handleUpdateHwConfig}
           updaterStatus={updaterStatus}
           onCheckUpdates={handleCheckUpdates}
-          onSaveUpdaterToken={handleSaveUpdaterToken}
           onForceLock={handleForceLock}
           onLogout={handleLogout}
           onToggleMobileCompanion={() => setMobileCompanionOpen((v) => !v)}

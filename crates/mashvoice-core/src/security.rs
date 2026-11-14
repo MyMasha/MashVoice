@@ -73,6 +73,23 @@ pub struct SecurityEngine {
     vault_path: PathBuf,
 }
 
+/// Writes a sensitive secret file (`master.secret`, `secure-vault.bin`, `mashvoice-state.json`)
+/// with strict owner/admin-only OS permissions (`0600` on Unix; per-user AppData ACL on Windows)
+/// so non-admin users on the host cannot read cryptographic keys or tokens.
+pub fn write_admin_secret_file(path: &Path, data: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    fs::write(path, data).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = fs::Permissions::from_mode(0o600);
+        let _ = fs::set_permissions(path, perms);
+    }
+    Ok(())
+}
+
 impl SecurityEngine {
     pub fn new(data_dir: &Path) -> Self {
         let _ = fs::create_dir_all(data_dir);
@@ -80,12 +97,17 @@ impl SecurityEngine {
         let master_secret = if let Ok(env_sec) = std::env::var("MASHVOICE_MASTER_SECRET") {
             env_sec
         } else if let Ok(existing) = fs::read_to_string(&secret_file) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&secret_file, fs::Permissions::from_mode(0o600));
+            }
             existing.trim().to_string()
         } else {
             let mut bytes = [0u8; 48];
             rand::thread_rng().fill_bytes(&mut bytes);
             let s = URL_SAFE_NO_PAD.encode(bytes);
-            let _ = fs::write(&secret_file, &s);
+            let _ = write_admin_secret_file(&secret_file, s.as_bytes());
             s
         };
 
@@ -290,7 +312,7 @@ impl SecurityEngine {
         let mut out = Vec::with_capacity(12 + ciphertext.len());
         out.extend_from_slice(&nonce_bytes);
         out.extend_from_slice(&ciphertext);
-        fs::write(&self.vault_path, out).map_err(|e| e.to_string())
+        write_admin_secret_file(&self.vault_path, &out)
     }
 }
 

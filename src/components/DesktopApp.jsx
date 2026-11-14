@@ -66,7 +66,6 @@ export default function DesktopApp({
   onUpdateHwConfig,
   updaterStatus,
   onCheckUpdates,
-  onSaveUpdaterToken,
   onForceLock,
   onLogout,
   onToggleMobileCompanion,
@@ -78,12 +77,8 @@ export default function DesktopApp({
     dmChannels: [],
     servers: [],
     voiceRooms: {},
-    localIps: [],
-    listenPort: 3080,
-    activeTunnels: [],
   });
-  const [publicIp, setPublicIp] = useState('');
-  const [connectingIp, setConnectingIp] = useState(false);
+  const [sendingRequest, setSendingRequest] = useState(false);
 
   // Navigation state: 'dms' or serverId
   const [selectedServerId, setSelectedServerId] = useState('srv-singularity');
@@ -96,8 +91,8 @@ export default function DesktopApp({
   const [friendError, setFriendError] = useState('');
   const [copiedInvite, setCopiedInvite] = useState(false);
 
-  // Global Internet P2P Rendezvous state
-  const [meshStatus, setMeshStatus] = useState({ online: false, brokersConnected: 0 });
+  // Global Zyntra Zero-IP Relay state
+  const [meshStatus, setMeshStatus] = useState({ online: false, relay: 'zyntra.win', mode: 'connecting' });
   const [incomingRequests, setIncomingRequests] = useState(() => {
     try {
       const raw = localStorage.getItem('mashvoice.incomingFriendReqs');
@@ -175,29 +170,6 @@ export default function DesktopApp({
   }, [workspace]);
 
   useEffect(() => {
-    fetch('https://api.ipify.org?format=json')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d?.ip) setPublicIp(String(d.ip).trim());
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const port = workspace.listenPort || 3080;
-    const candidates = [];
-    for (const ip of workspace.localIps || []) {
-      candidates.push(ip, `${ip}:${port}`);
-    }
-    if (publicIp) {
-      candidates.push(publicIp, `${publicIp}:${port}`);
-    }
-    if (candidates.length > 0) {
-      globalMeshRef.current?.registerIpTopics(candidates);
-    }
-  }, [workspace.localIps, workspace.listenPort, publicIp, meshStatus.online]);
-
-  useEffect(() => {
     activeVoiceRoomRef.current = activeVoiceRoomId;
     if (activeVoiceRoomId) {
       globalMeshRef.current?.subscribeRoom(activeVoiceRoomId);
@@ -268,10 +240,7 @@ export default function DesktopApp({
       friends: data.friends || [],
       dmChannels: data.dmChannels || [],
       servers: data.servers || [],
-      voiceRooms: data.voiceRooms || {},
-      localIps: data.localIps || (data.lanIp ? [data.lanIp] : prev.localIps),
-      listenPort: data.listenPort || prev.listenPort || 3080,
-      activeTunnels: data.activeTunnels || prev.activeTunnels || [],
+      voiceRooms: data.voiceRooms || prev.voiceRooms || {},
     }));
     if (data.me) setMe(data.me);
   };
@@ -326,17 +295,14 @@ export default function DesktopApp({
 
   const handleAcceptFriendRequest = async (peerProfile) => {
     if (!peerProfile) return;
+    if (peerProfile._relayMsgId) {
+      globalMeshRef.current?.ackMessage(peerProfile._relayTopic || '', peerProfile._relayMsgId);
+    }
     setIncomingRequests((prev) =>
       prev.filter((r) => r.peerId !== peerProfile.peerId && r.id !== peerProfile.id)
     );
     mashSounds.unlockGate();
-    await Promise.all([
-      globalMeshRef.current?.sendFriendAccept(peerProfile),
-      sendViaTunnel(peerProfile.peerId, {
-        type: 'friend:accept',
-        from: meRef.current,
-      }),
-    ]);
+    await globalMeshRef.current?.sendFriendAccept(peerProfile);
     await syncRemotePeer(peerProfile, true);
     setFriendError('');
     setFriendFeedback(`✓ ${peerProfile.displayName} est maintenant ton ami P2P !`);
@@ -345,6 +311,9 @@ export default function DesktopApp({
 
   const handleDeclineFriendRequest = (peerProfile) => {
     if (!peerProfile) return;
+    if (peerProfile._relayMsgId) {
+      globalMeshRef.current?.ackMessage(peerProfile._relayTopic || '', peerProfile._relayMsgId);
+    }
     setIncomingRequests((prev) =>
       prev.filter((r) => r.peerId !== peerProfile.peerId && r.id !== peerProfile.id)
     );
@@ -363,7 +332,7 @@ export default function DesktopApp({
     }
   };
 
-  // Unified P2P Event Processor (shared by Direct IP Rust Tunnels AND Global Internet Mesh)
+  // Unified Zero-IP Relay Event Processor (mv-relay-v1 over zyntra.win)
   handleP2PEventRef.current = async (data) => {
     const curMe = meRef.current;
     if (!curMe || !data || typeof data !== 'object') return;
@@ -395,10 +364,10 @@ export default function DesktopApp({
         });
 
         if (alreadyFriend || weRequestedThem) {
-          await Promise.all([
-            globalMeshRef.current?.sendFriendAccept(from),
-            sendViaTunnel(from.peerId, { type: 'friend:accept', from: curMe }),
-          ]);
+          if (data.msgId) {
+            globalMeshRef.current?.ackMessage(data._relayTopic || '', data.msgId);
+          }
+          await globalMeshRef.current?.sendFriendAccept(from);
           await syncRemotePeer(from, weRequestedThem);
           if (weRequestedThem) {
             setSentRequests((prev) =>
@@ -411,9 +380,14 @@ export default function DesktopApp({
         }
 
         mashSounds.messageTick();
+        const enrichedReq = {
+          ...from,
+          _relayMsgId: data.msgId || null,
+          _relayTopic: data._relayTopic || '',
+        };
         setIncomingRequests((prev) => {
           if (prev.some((r) => r.peerId === from.peerId || r.id === from.id)) return prev;
-          return [from, ...prev];
+          return [enrichedReq, ...prev];
         });
         break;
       }
@@ -637,13 +611,6 @@ export default function DesktopApp({
     if (activeVoiceRoomRef.current) {
       mesh.subscribeRoom(activeVoiceRoomRef.current);
     }
-    const port = workspaceRef.current.listenPort || 3080;
-    const ips = [];
-    for (const ip of workspaceRef.current.localIps || []) {
-      ips.push(ip, `${ip}:${port}`);
-    }
-    if (publicIp) ips.push(publicIp, `${publicIp}:${port}`);
-    if (ips.length > 0) mesh.registerIpTopics(ips);
 
     return () => {
       mesh.destroy();
@@ -1049,15 +1016,15 @@ export default function DesktopApp({
 
   const handleAddFriend = async (e) => {
     e.preventDefault();
-    const q = friendQuery.trim();
-    if (!q || connectingIp) return;
+    const q = friendQuery.trim().replace(/^@+/, '');
+    if (!q || sendingRequest) return;
     setFriendError('');
     setFriendFeedback('');
 
     const qLow = q.toLowerCase();
     if (qLow.startsWith('mash-sv4')) {
       setFriendError(
-        "Ceci est un Token MASH-SV4 ! Entre l'IP de ton ami (ex: 26.48.12.90:3080) ou son pseudo (ex: v0dka)."
+        "Ceci est un Token MASH-SV4 ! Entre uniquement le pseudo de ton ami (ex: v0dka)."
       );
       return;
     }
@@ -1068,83 +1035,57 @@ export default function DesktopApp({
       ) || qLow.includes(':3080');
 
     if (looksLikeIp) {
-      setConnectingIp(true);
-      try {
-        // Also send over MQTT IP inbox in parallel so NAT/box routers work without port-forwarding
-        globalMeshRef.current?.sendFriendRequestByIp(q);
+      setFriendError(
+        "Aucune adresse IP n'est nécessaire ! Entre simplement le pseudo de ton ami (ex: v0dka)."
+      );
+      return;
+    }
 
-        const res = await fetch('/api/p2p/connect-ip', {
-          method: 'POST',
-          headers: authHeaders,
-          body: JSON.stringify({ address: q }),
-        });
-        const data = await res.json().catch(() => ({}));
-
-        if (res.ok && data.ok) {
-          setFriendQuery('');
-          setSentRequests((prev) => (prev.includes(q) ? prev : [q, ...prev]));
-          setFriendFeedback(
-            `✓ Connecté en direct à ${data.address} ! Demande d'ami envoyée sur le PC de ton pote.`
-          );
-          setTimeout(() => setFriendFeedback(''), 5500);
-          return;
-        }
-
-        if (res.status === 400) {
-          setFriendError(data.error || 'Adresse IP invalide.');
-          return;
-        }
-
-        // Status 502: Direct TCP port closed (NAT/Box), fallback to Internet P2P relay if online
-        if (meshStatus.online) {
-          setFriendQuery('');
-          setSentRequests((prev) => (prev.includes(q) ? prev : [q, ...prev]));
-          setFriendFeedback(
-            `✓ Port direct 3080 fermé, demande envoyée via relais P2P vers ${data.address || q} ! (Pour du direct pur sans box, utilisez Radmin VPN ou Tailscale).`
-          );
-          setTimeout(() => setFriendFeedback(''), 6000);
-        } else {
-          setFriendError(
-            data.error ||
-              `Impossible de joindre ${q}. Vérifie que MashVoice est ouvert chez ton ami (Radmin VPN / Tailscale / LAN ou port 3080 ouvert).`
-          );
-        }
-      } finally {
-        setConnectingIp(false);
+    setSendingRequest(true);
+    try {
+      const res = await fetch('/api/friends/add', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ query: q, globalOnly: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setFriendError(data.error || 'Impossible d’envoyer la demande.');
+        return;
       }
-      return;
-    }
 
-    const res = await fetch('/api/friends/add', {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify({ query: q, globalOnly: true }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setFriendError(data.error || 'Impossible d’envoyer la demande.');
-      return;
-    }
+      const [sentCount, presence] = await Promise.all([
+        globalMeshRef.current?.sendFriendRequest(q),
+        globalMeshRef.current?.checkPresence(q.split('#')[0]),
+      ]);
+      if (q.includes('#')) {
+        const basePseudo = q.split('#')[0].trim();
+        if (basePseudo) await globalMeshRef.current?.sendFriendRequest(basePseudo);
+      }
 
-    // Broadcast encrypted friend request over global P2P mesh
-    await globalMeshRef.current?.sendFriendRequest(q);
-    if (q.includes('#')) {
-      const basePseudo = q.split('#')[0].trim();
-      if (basePseudo) await globalMeshRef.current?.sendFriendRequest(basePseudo);
-    }
+      setFriendQuery('');
+      setSentRequests((prev) => (prev.includes(q) ? prev : [q, ...prev]));
 
-    setFriendQuery('');
-    setSentRequests((prev) => (prev.includes(q) ? prev : [q, ...prev]));
-
-    if (data.friend && !data.pendingGlobal) {
-      setFriendFeedback(`✓ Conversation ouverte avec ${data.friend.displayName} !`);
-      await fetchWorkspace();
-      setSelectedServerId('dms');
-      setSelectedChannelId(data.dmChannelId);
-    } else {
-      setFriendFeedback(`✓ Demande d'ami envoyée à "${q}" ! En attente d'acceptation.`);
+      if (data.friend && !data.pendingGlobal) {
+        setFriendFeedback(`✓ Conversation ouverte avec ${data.friend.displayName} !`);
+        await fetchWorkspace();
+        setSelectedServerId('dms');
+        setSelectedChannelId(data.dmChannelId);
+      } else if (presence?.online) {
+        setFriendFeedback(
+          `✓ Demande d'ami envoyée en direct à @${q} (en ligne sur Zyntra) !`
+        );
+      } else if (sentCount) {
+        setFriendFeedback(
+          `✓ Demande déposée pour @${q} sur Zyntra (il la recevra dès qu'il ouvrira MashVoice) !`
+        );
+      } else {
+        setFriendFeedback(`✓ Demande d'ami en file d'attente pour @${q}.`);
+      }
+      setTimeout(() => setFriendFeedback(''), 5000);
+    } finally {
+      setSendingRequest(false);
     }
-    setTimeout(() => setFriendFeedback(''), 4500);
   };
 
   const activeGameTitle =
@@ -1385,111 +1326,59 @@ export default function DesktopApp({
                       letterSpacing: '0.03em',
                     }}
                   >
-                    <span>MON IP &amp; PROFIL P2P</span>
+                    <span>MON PSEUDO MASHVOICE</span>
                     <span
                       style={{
-                        color:
-                          workspace.activeTunnels?.length > 0 || meshStatus.online
-                            ? 'var(--emerald)'
-                            : 'var(--gold-bright)',
+                        color: meshStatus.online ? 'var(--emerald)' : 'var(--gold-bright)',
                         fontFamily: 'var(--font-mono)',
                         fontSize: 10,
                       }}
                     >
-                      {workspace.activeTunnels?.length > 0
-                        ? `● Direct IP (${workspace.activeTunnels.length})`
-                        : meshStatus.online
-                          ? '● Internet OK'
-                          : `● Port ${workspace.listenPort || 3080} Prêt`}
+                      {meshStatus.online ? '● Zyntra Actif' : '○ Connexion...'}
                     </span>
                   </div>
                   <div style={{ fontSize: 10.8, color: 'var(--text-secondary)', lineHeight: 1.35 }}>
-                    Envoie ton <strong>IP P2P</strong> (Radmin / Tailscale / LAN / Box) ou ton{' '}
-                    <strong>Pseudo</strong> à ton pote :
+                    Donne simplement ton <strong>Pseudo</strong> à ton ami (zéro adresse IP) :
                   </div>
-                  {(workspace.localIps || []).map((ip) => {
-                    const port = workspace.listenPort || 3080;
-                    const fullAddr = `${ip}:${port}`;
-                    const label = ip.startsWith('26.')
-                      ? 'IP Radmin'
-                      : ip.startsWith('100.')
-                        ? 'IP Tailscale'
-                        : ip.startsWith('25.')
-                          ? 'IP Hamachi'
-                          : 'IP Réseau';
-                    return (
-                      <button
-                        key={ip}
-                        type="button"
-                        className="btn-chip"
-                        style={{
-                          justifyContent: 'center',
-                          fontSize: 11,
-                          borderColor: 'rgba(72, 199, 142, 0.45)',
-                          color: '#6ce0ad',
-                        }}
-                        onClick={() => {
-                          navigator.clipboard?.writeText(fullAddr);
-                          setFriendError('');
-                          setFriendFeedback(`✓ ${label} copiée : ${fullAddr}`);
-                          setTimeout(() => setFriendFeedback(''), 2800);
-                        }}
-                        title="Cliquer pour copier ton IP P2P directe"
-                      >
-                        <Copy size={12} /> {label} : {fullAddr}
-                      </button>
-                    );
-                  })}
-                  {publicIp && !(workspace.localIps || []).includes(publicIp) && (
-                    <button
-                      type="button"
-                      className="btn-chip"
-                      style={{ justifyContent: 'center', fontSize: 10.5 }}
-                      onClick={() => {
-                        const fullPub = `${publicIp}:${workspace.listenPort || 3080}`;
-                        navigator.clipboard?.writeText(fullPub);
-                        setFriendError('');
-                        setFriendFeedback(`✓ IP Publique copiée : ${fullPub}`);
-                        setTimeout(() => setFriendFeedback(''), 2800);
-                      }}
-                      title="Cliquer pour copier ton IP Internet publique"
-                    >
-                      <Copy size={11} /> IP Internet : {publicIp}:{workspace.listenPort || 3080}
-                    </button>
-                  )}
                   <button
                     type="button"
                     className="btn-chip"
-                    style={{ justifyContent: 'center', fontSize: 10.5, opacity: 0.9 }}
+                    style={{
+                      justifyContent: 'center',
+                      fontSize: 11.5,
+                      borderColor: 'rgba(72, 199, 142, 0.45)',
+                      color: '#6ce0ad',
+                    }}
                     onClick={() => {
-                      const tagStr = `${me?.username}#${me?.tag || '0001'}`;
-                      navigator.clipboard?.writeText(tagStr);
+                      const pseudoStr = me?.username || '';
+                      navigator.clipboard?.writeText(pseudoStr);
                       setFriendError('');
-                      setFriendFeedback(`✓ Pseudo copié : ${tagStr}`);
+                      setFriendFeedback(`✓ Pseudo copié : ${pseudoStr}`);
                       setTimeout(() => setFriendFeedback(''), 2600);
                     }}
+                    title="Cliquer pour copier ton pseudo"
                   >
-                    <Copy size={11} /> Pseudo : {me?.username}#{me?.tag || '0001'}
+                    <Copy size={12} /> @{me?.username}
                   </button>
                 </div>
 
                 <form onSubmit={handleAddFriend} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div className="cat-header">AJOUTER PAR IP DIRECTE (OU PSEUDO)</div>
+                  <div className="cat-header">AJOUTER UN AMI PAR PSEUDO</div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <input
                       className="mash-input"
                       style={{ padding: '7px 10px', fontSize: 12 }}
-                      placeholder="ex: 26.48.12.90:3080 ou v0dka"
+                      placeholder="Pseudo de ton ami (ex: v0dka)"
                       value={friendQuery}
                       onChange={(e) => setFriendQuery(e.target.value)}
                     />
                     <button
                       type="submit"
                       className="btn-chip"
-                      disabled={connectingIp}
-                      title="Connecter l'IP directe ou envoyer une demande d'ami"
+                      disabled={sendingRequest}
+                      title="Envoyer une demande d'ami par pseudo"
                     >
-                      {connectingIp ? '...' : <UserPlus size={14} />}
+                      {sendingRequest ? '...' : <UserPlus size={14} />}
                     </button>
                   </div>
                   {friendFeedback && (
@@ -1573,7 +1462,7 @@ export default function DesktopApp({
                   <div className="channel-list" style={{ marginTop: 6 }}>
                     {workspace.dmChannels.length === 0 && (
                       <div style={{ fontSize: 11.5, color: 'var(--text-muted)', padding: '6px 4px' }}>
-                        Entre l&apos;IP de ton ami (ex: Radmin VPN / LAN / :3080) ou son pseudo ci-dessus !
+                        Entre simplement le pseudo de ton ami ci-dessus pour discuter et l&apos;appeler en P2P !
                       </div>
                     )}
                     {workspace.dmChannels.map(({ id, peer }) => (
@@ -2360,7 +2249,6 @@ export default function DesktopApp({
           onToggleSimulatedGame={() => setSimulatedGame((v) => !v)}
           updaterStatus={updaterStatus}
           onCheckUpdates={onCheckUpdates}
-          onSaveUpdaterToken={onSaveUpdaterToken}
           onProfileUpdated={(u) => setMe(u)}
           onLogout={onLogout}
           onClose={() => setShowSettings(false)}

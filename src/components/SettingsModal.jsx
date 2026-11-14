@@ -25,7 +25,6 @@ export default function SettingsModal({
   onToggleSimulatedGame,
   updaterStatus,
   onCheckUpdates,
-  onSaveUpdaterToken,
   onProfileUpdated,
   onLogout,
   onClose,
@@ -46,8 +45,7 @@ export default function SettingsModal({
   const [mintedRaw, setMintedRaw] = useState('');
   const [copiedId, setCopiedId] = useState('');
 
-  // Updater input
-  const [ghPat, setGhPat] = useState('');
+  // Updater state
   const [checkingUpd, setCheckingUpd] = useState(false);
 
   const authHeaders = {
@@ -586,75 +584,86 @@ export default function SettingsModal({
                 )}
               </div>
 
-              <div className="hw-card">
-                <strong>Tokens émis & Révocation en Temps Réel</strong>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                  Révoquer un token déconnecte instantanément tous les PC et téléphones qui
-                  l&apos;utilisent.
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {secData.tokens.map((t) => (
-                    <div
-                      key={t.jti}
-                      style={{
-                        padding: '10px 12px',
-                        borderRadius: 8,
-                        background: 'rgba(0,0,0,0.35)',
-                        border: '1px solid var(--border-subtle)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 10,
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: 13 }}>
-                          {t.label}{' '}
-                          {t.jti === secData.currentTokenJti && (
-                            <span className="singularity-badge">SESSION ACTUELLE</span>
-                          )}
+              {secData.isAdmin !== false ? (
+                <div className="hw-card">
+                  <strong>Tokens émis &amp; Révocation en Temps Réel (Admin uniquement)</strong>
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    Révoquer un token déconnecte instantanément tous les PC et téléphones qui
+                    l&apos;utilisent. Ces secrets ne sont pas accessibles aux comptes non-admin.
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {secData.tokens.map((t) => (
+                      <div
+                        key={t.jti}
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: 8,
+                          background: 'rgba(0,0,0,0.35)',
+                          border: '1px solid var(--border-subtle)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 10,
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>
+                            {t.label}{' '}
+                            {t.jti === secData.currentTokenJti && (
+                              <span className="singularity-badge">SESSION ACTUELLE</span>
+                            )}
+                          </div>
+                          <div
+                            style={{
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: 11,
+                              color: 'var(--text-muted)',
+                            }}
+                          >
+                            {t.tokenPreview} • Expire le{' '}
+                            {new Date(t.expiresAt).toLocaleDateString('fr-FR')}
+                          </div>
                         </div>
-                        <div
-                          style={{
-                            fontFamily: 'var(--font-mono)',
-                            fontSize: 11,
-                            color: 'var(--text-muted)',
-                          }}
-                        >
-                          {t.tokenPreview} • Expire le{' '}
-                          {new Date(t.expiresAt).toLocaleDateString('fr-FR')}
-                        </div>
-                      </div>
 
-                      {t.revoked ? (
-                        <span style={{ color: 'var(--crimson)', fontSize: 11.5, fontWeight: 700 }}>
-                          RÉVOQUÉ
-                        </span>
-                      ) : (
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          {t.tokenValue && (
+                        {t.revoked ? (
+                          <span style={{ color: 'var(--crimson)', fontSize: 11.5, fontWeight: 700 }}>
+                            RÉVOQUÉ
+                          </span>
+                        ) : (
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            {t.tokenValue && (
+                              <button
+                                type="button"
+                                className="btn-chip"
+                                onClick={() => copyText(t.tokenValue, t.jti)}
+                              >
+                                {copiedId === t.jti ? 'Copié' : 'Copier'}
+                              </button>
+                            )}
                             <button
                               type="button"
-                              className="btn-chip"
-                              onClick={() => copyText(t.tokenValue, t.jti)}
+                              className="dock-action-btn danger"
+                              onClick={() => handleRevokeToken(t.jti)}
+                              title="Révoquer ce token et couper ses connexions"
                             >
-                              {copiedId === t.jti ? 'Copié' : 'Copier'}
+                              <Trash2 size={13} /> Révoquer
                             </button>
-                          )}
-                          <button
-                            type="button"
-                            className="dock-action-btn danger"
-                            onClick={() => handleRevokeToken(t.jti)}
-                            title="Révoquer ce token et couper ses connexions"
-                          >
-                            <Trash2 size={13} /> Révoquer
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="hw-card" style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>
+                  <strong>Registre des Tokens &amp; Révocation (Accès Administrateur Requis)</strong>
+                  <div>
+                    Votre session utilise le rang <code>{secData.currentTier || 'MEMBER'}</code>. Les
+                    fichiers secrets et la révocation globale des tokens sont strictement réservés aux
+                    administrateurs (<code>FOUNDER</code> / <code>ADMIN</code>).
+                  </div>
+                </div>
+              )}
             </>
           )}
 
@@ -662,9 +671,12 @@ export default function SettingsModal({
             <div className="hw-card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <strong>Dépôt Cible : {updaterStatus?.owner || 'MyMasha'}/{updaterStatus?.repo || 'MashVoice'}</strong>
+                  <strong>
+                    Dépôt Open-Source : {updaterStatus?.owner || 'MyMasha'}/{updaterStatus?.repo || 'MashVoice'}
+                  </strong>
                   <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                    Version installée : v{updaterStatus?.currentVersion || '1.0.0'} • Canal Stable
+                    Version installée : v{updaterStatus?.currentVersion || '1.0.5'} • Signature Ed25519 (
+                    {updaterStatus?.updaterKeyId || 'F6A9F0FBF91D7ADE'})
                   </div>
                 </div>
                 <button
@@ -691,48 +703,21 @@ export default function SettingsModal({
                 }}
               >
                 {updaterStatus?.lastStatus?.message ||
-                  'Auto-Updater prêt. Configurez votre token GitHub Read-Only (365 jours) sur MyMasha.'}
+                  'Auto-Updater Open-Source prêt (aucune clé API requise • vérification cryptographique Ed25519 active).'}
               </div>
 
               <a
-                href={updaterStatus?.prefilledTokenUrl}
+                href={
+                  updaterStatus?.publicReleasesUrl ||
+                  'https://github.com/MyMasha/MashVoice/releases/latest'
+                }
                 target="_blank"
                 rel="noreferrer"
                 className="btn-gold-cta"
                 style={{ textDecoration: 'none' }}
               >
-                <ExternalLink size={15} /> Générer le Token Read-Only 365 Jours (Organisation MyMasha)
+                <ExternalLink size={15} /> Voir les Releases Officielles sur GitHub (MyMasha/MashVoice)
               </a>
-
-              <div className="field-group" style={{ marginTop: 6 }}>
-                <label className="field-label">
-                  <span>Enregistrer le Token GitHub Read-Only dans l&apos;Auto-Updater</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
-                    {updaterStatus?.hasToken ? updaterStatus.maskedToken : 'Aucun token'}
-                  </span>
-                </label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input
-                    type="password"
-                    className="mash-input mono"
-                    placeholder="github_pat_..."
-                    value={ghPat}
-                    onChange={(e) => setGhPat(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="btn-chip"
-                    style={{ padding: '0 16px' }}
-                    onClick={async () => {
-                      if (!ghPat.trim()) return;
-                      await onSaveUpdaterToken(ghPat.trim());
-                      setGhPat('');
-                    }}
-                  >
-                    Sauvegarder
-                  </button>
-                </div>
-              </div>
             </div>
           )}
 

@@ -1,5 +1,5 @@
 use futures_util::{SinkExt, StreamExt};
-use mashvoice_core::updater::PREFILLED_GITHUB_TOKEN_URL;
+use mashvoice_core::updater::PUBLIC_RELEASES_URL;
 use mashvoice_server::build_router;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -269,7 +269,46 @@ async fn mobile_qr_scan_authenticates_pc_and_p2p_signaling_works() {
         .unwrap();
     assert_eq!(upd["owner"], "MyMasha");
     assert_eq!(upd["repo"], "MashVoice");
-    assert_eq!(upd["prefilledTokenUrl"], PREFILLED_GITHUB_TOKEN_URL);
+    assert_eq!(upd["publicReleasesUrl"], PUBLIC_RELEASES_URL);
+    assert_eq!(upd["openSourceSigned"], true);
+    assert!(upd.get("maskedToken").is_none());
+
+    // Verify non-admin (MEMBER) cannot read admin tokens or revoke tokens
+    let member_token = boot["starterTokens"][1]["token"].as_str().unwrap();
+    let member_login: Value = client
+        .post(format!("{}/api/auth/login", base))
+        .json(&json!({
+            "username": "friend_member",
+            "connectionToken": member_token
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let member_sess = member_login["sessionToken"].as_str().unwrap();
+
+    let member_sec: Value = client
+        .get(format!("{}/api/security/tokens", base))
+        .bearer_auth(member_sess)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(member_sec["isAdmin"], false);
+    assert_eq!(member_sec["tokens"].as_array().unwrap().len(), 0);
+
+    let member_revoke = client
+        .post(format!("{}/api/security/tokens/revoke", base))
+        .bearer_auth(member_sess)
+        .json(&json!({ "jti": boot["starterTokens"][0]["jti"] }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(member_revoke.status().as_u16(), 403);
 
     let telem: Value = client
         .get(format!("{}/api/hardware/telemetry", base))
