@@ -96,6 +96,8 @@ export function installRustBridge() {
       saveHardwareConfig: (patch) => invoke('save_hardware_config', { patch }),
       getVault: () => invoke('vault_get'),
       setVault: (patch) => invoke('vault_set', { patch }),
+      setScreenShareActive: (active) =>
+        invoke('set_screen_share_active', { active: Boolean(active) }).catch(() => ({ ok: false })),
       repairMicrophoneAccess: (openOsSettings = false) =>
         invoke('repair_microphone_access', { openOsSettings }),
       onHardwareTelemetry: (cb) => {
@@ -112,6 +114,7 @@ export function installRustBridge() {
     window.mashNative = {
       isTauri: false,
       isElectron: false,
+      setScreenShareActive: async () => ({ ok: true, hiddenBars: 0 }),
       repairMicrophoneAccess: async () => ({ ok: true, clearedWebviewDenials: 0 }),
       saveHardwareConfig: (patch) =>
         fetch('/api/hardware/config', {

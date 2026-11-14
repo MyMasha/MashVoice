@@ -20,6 +20,12 @@ import {
   Waves,
 } from 'lucide-react';
 import { KrispVoiceProcessor, loadSavedKrispMode } from '../lib/krispEngine.js';
+import {
+  STREAM_RESOLUTIONS,
+  STREAM_FPS_OPTIONS,
+  computeRecommendedBitrateKbps,
+  normalizeResolutionKey,
+} from '../lib/p2pEngine.js';
 import { mashSounds } from '../lib/soundEffects.js';
 
 export default function SettingsModal({
@@ -763,31 +769,117 @@ export default function SettingsModal({
                 <div className="field-label">
                   <span>Résolution &amp; Cadence FPS des Streams P2P</span>
                   <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
-                    {streamSettings.resolution} @ {streamSettings.fps} FPS
+                    {normalizeResolutionKey(streamSettings.resolution)} @ {streamSettings.fps} FPS •{' '}
+                    {((streamSettings.maxBitrateKbps || 10500) / 1000).toFixed(1)} Mbps
                   </span>
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {['720p', '1080p', '1440p'].map((res) => (
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 11.5, color: 'var(--text-muted)', minWidth: 74 }}>
+                      Résolution :
+                    </span>
+                    {STREAM_RESOLUTIONS.map((res) => (
+                      <button
+                        key={res}
+                        type="button"
+                        className={`preset-pill ${normalizeResolutionKey(streamSettings.resolution) === res ? 'selected' : ''}`}
+                        onClick={() =>
+                          onUpdateStreamSettings({
+                            resolution: res,
+                            ...(streamSettings.customBitrate
+                              ? {}
+                              : {
+                                  maxBitrateKbps: computeRecommendedBitrateKbps(
+                                    res,
+                                    streamSettings.fps
+                                  ),
+                                }),
+                          })
+                        }
+                      >
+                        {res}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 11.5, color: 'var(--text-muted)', minWidth: 74 }}>
+                      Fluidité :
+                    </span>
+                    {STREAM_FPS_OPTIONS.map((fps) => (
+                      <button
+                        key={fps}
+                        type="button"
+                        className={`preset-pill ${Number(streamSettings.fps) === fps ? 'selected' : ''}`}
+                        onClick={() =>
+                          onUpdateStreamSettings({
+                            fps,
+                            ...(streamSettings.customBitrate
+                              ? {}
+                              : {
+                                  maxBitrateKbps: computeRecommendedBitrateKbps(
+                                    streamSettings.resolution,
+                                    fps
+                                  ),
+                                }),
+                          })
+                        }
+                      >
+                        {fps} FPS
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ marginTop: 6 }}>
+                  <div className="field-label">
+                    <span>Débit Vidéo Maximum (Bitrate P2P)</span>
                     <button
-                      key={res}
                       type="button"
-                      className={`preset-pill ${streamSettings.resolution === res ? 'selected' : ''}`}
-                      onClick={() => onUpdateStreamSettings({ resolution: res })}
+                      className="btn-chip"
+                      style={{ fontSize: 10.5, padding: '2px 8px' }}
+                      onClick={() =>
+                        onUpdateStreamSettings({
+                          customBitrate: false,
+                          maxBitrateKbps: computeRecommendedBitrateKbps(
+                            streamSettings.resolution,
+                            streamSettings.fps
+                          ),
+                        })
+                      }
                     >
-                      {res}
+                      Auto Recommandé
                     </button>
-                  ))}
-                  <span style={{ width: 14 }} />
-                  {[30, 60, 120].map((fps) => (
-                    <button
-                      key={fps}
-                      type="button"
-                      className={`preset-pill ${streamSettings.fps === fps ? 'selected' : ''}`}
-                      onClick={() => onUpdateStreamSettings({ fps })}
-                    >
-                      {fps} FPS
-                    </button>
-                  ))}
+                  </div>
+                  <input
+                    type="range"
+                    min={2000}
+                    max={45000}
+                    step={500}
+                    className="range-slider"
+                    value={streamSettings.maxBitrateKbps || 10500}
+                    onChange={(e) =>
+                      onUpdateStreamSettings({
+                        customBitrate: true,
+                        maxBitrateKbps: Number(e.target.value),
+                      })
+                    }
+                  />
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 4,
+                    padding: '9px 12px',
+                    borderRadius: 8,
+                    background: 'rgba(72, 199, 142, 0.08)',
+                    border: '1px solid rgba(72, 199, 142, 0.35)',
+                    fontSize: 11.5,
+                    color: 'var(--text-secondary)',
+                  }}
+                >
+                  ✓ <strong style={{ color: '#6ce0ad' }}>Anti-Freeze Minecraft &amp; Zéro Barre en Jeu actifs</strong> : la barre flottante « partage votre écran » est automatiquement masquée sous Windows et le mode Anti-Occlusion / Anti-EcoQoS empêche le gel d&apos;image sur Minecraft (sélectionnez « Écran entier » en Plein Écran F11 OpenGL).
                 </div>
               </div>
             </>

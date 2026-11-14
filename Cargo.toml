@@ -13,14 +13,14 @@ exclude = [
 ]
 
 [workspace.package]
-version = "1.0.6"
+version = "1.0.7"
 edition = "2021"
 authors = ["MyMasha <https://github.com/MyMasha/MashVoice>"]
 license = "MIT"
 repository = "https://github.com/MyMasha/MashVoice"
 
 [profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
+opt-level = 2
+lto = false
+codegen-units = 16
 strip = "symbols"

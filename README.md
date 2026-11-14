@@ -96,6 +96,10 @@ cargo run -q -p mashvoice-server -- mint-token --label "Invitation Escouade" --d
 
 # 6. Compiler l'installateur natif Tauri v2 (.exe / .msi sous Windows)
 npm run tauri:build
+
+# 7. Compiler en local sur Windows (~45s) ET publier directement sur GitHub Releases (sans attendre GitHub Actions !)
+npm run release:local
+# (ou avec incrément auto de version : powershell -ExecutionPolicy Bypass -File scripts/publish-local-release.ps1 -Version 1.0.8)
 ```
 
 ---

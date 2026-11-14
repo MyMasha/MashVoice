@@ -23,13 +23,12 @@ pub const PUBLIC_RELEASES_URL: &str = "https://github.com/MyMasha/MashVoice/rele
 pub const ED25519_UPDATER_KEY_ID: &str = "F6A9F0FBF91D7ADE";
 
 pub const BUNDLED_CHANGELOG_NOTES: &str = "\
-### ✨ Nouveautés MashVoice Singularity v1.0.6\n\
-- **🛡️ MashKrisp™ IA (Isolation Vocale Anti-Clavier)** : Filtre DSP temps réel `AudioWorklet` supprimant les clics de clavier mécanique, souffles PC et bruits ambiants pour ne garder que votre voix.\n\
-- **🎙️ Réparation & Hot-Plug Micro Instantané** : Si le micro est bloqué ou débranché, MashVoice le redemande en 1 clic et le rattache à chaud sans quitter l'appel.\n\
-- **🎵 Musiques d'Appels & Sons Discord** : Sonnerie musicale polyphonique d'appel entrant, musique d'attente d'appel sortant, sons de messages, vocal, sourdine et stream.\n\
-- **⚙️ Paramètres Serveur Complets & Menu Clic-Droit** : Menu contextuel complet (Muet, Notifications, Profil par serveur, Emojis/Stickers, Icône/Bannière, Déplacer, Quitter) et panneau d'administration multi-onglets.\n\
-- **🚀 Auto-Updater 1-Clic Sans Pop-Up SmartScreen & Changelog** : Pastille dorée `Mise à jour`, installation atomique `.exe` sans `Zone.Identifier` et affichage automatique du Changelog au redémarrage.\n\
-- **🌌 Refonte Visuelle Singularity Glass** : Interface affinée inspirée de MashClient 4.4.";
+### ✨ Nouveautés MashVoice Singularity v1.0.7\n\
+- **🚫 Suppression Automatique de la Barre en Jeu** : La barre flottante Windows/WebView2 (`tauri.localhost partage votre écran...`) est désormais détectée et masquée instantanément en arrière-plan (< 75 ms) sans couper le partage.\n\
+- **🎞️ Sélecteur Stream Complet (`720p, 1080p, 2K, 4K` & `15, 30, 60, 120 FPS`)** : Nouvelle fenêtre « Configurer ton Stream P2P » + sélecteurs rapides en direct jusqu'à **4K UHD @ 120 FPS** (42 Mbps).\n\
+- **🧊 Correctif Anti-Freeze Minecraft & Jeux Plein Écran** : Désactivation native de `CalculateNativeWinOcclusion`, du bridage Windows 11 `EcoQoS` sur les processus WebView2 et ajout d'un Watchdog anti-gel WebRTC OpenGL.\n\
+- **⚡ Build Local Instantané & Release Rapide** : Nouveau script `npm run release:local` (`scripts/publish-local-release.ps1`) pour builder en local sur votre PC et publier directement sur GitHub Releases + profil Rust parallèle 16 unités.\n\
+- **🛡️ MashKrisp™ IA, Réparation Micro 1-Clic & Auto-Updater Sans SmartScreen** : Toujours inclus et actifs.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -39,8 +39,15 @@ import SettingsModal from './SettingsModal.jsx';
 import ServerRoleModal from './ServerRoleModal.jsx';
 import ServerSettingsModal, { SERVER_BANNER_PRESETS } from './ServerSettingsModal.jsx';
 import ServerContextMenu, { ServerMediaViewerModal } from './ServerContextMenu.jsx';
+import StreamLaunchModal from './StreamLaunchModal.jsx';
 import { UpdateTopPill } from './UpdateExperience.jsx';
-import { P2PMeshEngine } from '../lib/p2pEngine.js';
+import {
+  P2PMeshEngine,
+  STREAM_RESOLUTIONS,
+  STREAM_FPS_OPTIONS,
+  computeRecommendedBitrateKbps,
+  normalizeResolutionKey,
+} from '../lib/p2pEngine.js';
 import { GlobalP2PMesh } from '../lib/globalMesh.js';
 import { loadSavedKrispMode } from '../lib/krispEngine.js';
 import { mashSounds } from '../lib/soundEffects.js';
@@ -182,7 +189,8 @@ export default function DesktopApp({
   const [streamSettings, setStreamSettings] = useState(() => ({
     resolution: '1080p',
     fps: 60,
-    maxBitrateKbps: 6500,
+    maxBitrateKbps: 10500,
+    customBitrate: false,
     preferredCodec: 'H264',
     maintainFramerate: true,
     echoCancellation: true,
@@ -200,6 +208,7 @@ export default function DesktopApp({
 
   // Modals
   const [showSettings, setShowSettings] = useState(false);
+  const [showStreamLaunchModal, setShowStreamLaunchModal] = useState(false);
   const [serverModalMode, setServerModalMode] = useState(null); // 'create-or-join' | 'create-channel' | 'roles'
 
   const wsRef = useRef(null);
@@ -1153,16 +1162,19 @@ export default function DesktopApp({
     }
   };
 
-  const handleToggleScreenShare = async () => {
+  const handleConfirmStartStream = async (preset) => {
     if (!activeVoiceRoomId) return;
-    const next = !screenOn;
-    if (next) {
+    setShowStreamLaunchModal(false);
+    handleUpdateStreamSettings(preset);
+    const stream = await p2pRef.current?.toggleScreenShare(true, preset);
+    const active = Boolean(stream);
+    if (active) {
       mashSounds.startStream();
-    } else {
-      mashSounds.stopStream();
+      showToast(
+        `📡 Stream P2P lancé en ${preset.resolution} • ${preset.fps} FPS (barre en jeu masquée)`
+      );
     }
-    const stream = await p2pRef.current?.toggleScreenShare(next);
-    setScreenOn(Boolean(stream));
+    setScreenOn(active);
     setLocalPreviewStream(stream || p2pRef.current?.localCameraStream || null);
     if (wsRef.current?.readyState === 1) {
       wsRef.current.send(
@@ -1170,7 +1182,31 @@ export default function DesktopApp({
           type: 'p2p:media-state',
           roomId: activeVoiceRoomId,
           patch: {
-            screenOn: Boolean(stream),
+            screenOn: active,
+            streamSpec: `${preset.resolution} • ${preset.fps} FPS`,
+          },
+        })
+      );
+    }
+  };
+
+  const handleToggleScreenShare = async () => {
+    if (!activeVoiceRoomId) return;
+    if (!screenOn) {
+      setShowStreamLaunchModal(true);
+      return;
+    }
+    mashSounds.stopStream();
+    await p2pRef.current?.toggleScreenShare(false);
+    setScreenOn(false);
+    setLocalPreviewStream(p2pRef.current?.localCameraStream || null);
+    if (wsRef.current?.readyState === 1) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'p2p:media-state',
+          roomId: activeVoiceRoomId,
+          patch: {
+            screenOn: false,
             streamSpec: `${streamSettings.resolution} • ${streamSettings.fps} FPS`,
           },
         })
@@ -1396,6 +1432,7 @@ export default function DesktopApp({
   const activeGameTitle =
     nativeTelemetry.detectedGame || (simulatedGame ? 'MashClient 1.8.9 (Turbo FPS)' : null);
   const shaderPausedForGame =
+    screenOn ||
     hwConfig.renderBackend === 'cpu-software' ||
     (Boolean(activeGameTitle) && hwConfig.pauseShaderInGame !== false) ||
     hwConfig.shaderPreset === 'turbo';
@@ -2392,7 +2429,7 @@ export default function DesktopApp({
                       color: 'var(--text-secondary)',
                     }}
                   >
-                    {streamSettings.resolution} • {streamSettings.fps} FPS • Ping {p2pStats.rttMs} ms
+                    {normalizeResolutionKey(streamSettings.resolution)} • {streamSettings.fps} FPS • Ping {p2pStats.rttMs} ms
                   </span>
                   {streamSettings.krispMode !== 'off' && (
                     <span className="krisp-stage-pill">
@@ -2401,7 +2438,7 @@ export default function DesktopApp({
                   )}
                 </div>
 
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   {!micState.hasRealMic && (
                     <button
                       type="button"
@@ -2419,6 +2456,78 @@ export default function DesktopApp({
                     {cameraOn ? 'Couper Caméra' : 'Activer Caméra'}
                   </button>
                 </div>
+              </div>
+
+              {/* Quick Live Stream Resolution (720p / 1080p / 2K / 4K) & FPS (15 / 30 / 60 / 120) Bar */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: 8,
+                  padding: '6px 10px',
+                  borderRadius: 9,
+                  background: 'rgba(8, 9, 14, 0.55)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 10.5, color: 'var(--text-muted)', marginRight: 2 }}>
+                    Qualité :
+                  </span>
+                  {STREAM_RESOLUTIONS.map((res) => (
+                    <button
+                      key={res}
+                      type="button"
+                      className={`preset-pill ${normalizeResolutionKey(streamSettings.resolution) === res ? 'selected' : ''}`}
+                      style={{ padding: '2px 8px', fontSize: 10.5 }}
+                      onClick={() =>
+                        handleUpdateStreamSettings({
+                          resolution: res,
+                          ...(streamSettings.customBitrate
+                            ? {}
+                            : {
+                                maxBitrateKbps: computeRecommendedBitrateKbps(
+                                  res,
+                                  streamSettings.fps
+                                ),
+                              }),
+                        })
+                      }
+                    >
+                      {res}
+                    </button>
+                  ))}
+                  <span style={{ width: 6, height: 12, borderLeft: '1px solid var(--border-subtle)', marginLeft: 4 }} />
+                  {STREAM_FPS_OPTIONS.map((fps) => (
+                    <button
+                      key={fps}
+                      type="button"
+                      className={`preset-pill ${Number(streamSettings.fps) === fps ? 'selected' : ''}`}
+                      style={{ padding: '2px 8px', fontSize: 10.5 }}
+                      onClick={() =>
+                        handleUpdateStreamSettings({
+                          fps,
+                          ...(streamSettings.customBitrate
+                            ? {}
+                            : {
+                                maxBitrateKbps: computeRecommendedBitrateKbps(
+                                  streamSettings.resolution,
+                                  fps
+                                ),
+                              }),
+                        })
+                      }
+                    >
+                      {fps} FPS
+                    </button>
+                  ))}
+                </div>
+
+                <span style={{ fontSize: 10.5, color: '#6ce0ad', fontFamily: 'var(--font-mono)' }}>
+                  ✓ Anti-Freeze Minecraft • Sans barre en jeu
+                </span>
               </div>
 
               <div className="stream-tiles-grid">
@@ -2810,6 +2919,16 @@ export default function DesktopApp({
           onProfileUpdated={(u) => setMe(u)}
           onLogout={onLogout}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {/* Stream Quality Picker Modal (720p/1080p/2K/4K & 15/30/60/120 FPS + Anti-Freeze Minecraft) */}
+      {showStreamLaunchModal && (
+        <StreamLaunchModal
+          streamSettings={streamSettings}
+          activeGameTitle={activeGameTitle}
+          onStartStream={handleConfirmStartStream}
+          onClose={() => setShowStreamLaunchModal(false)}
         />
       )}
 

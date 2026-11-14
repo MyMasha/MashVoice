@@ -5,7 +5,7 @@ const PERM_LABELS = [
   { id: 'ADMINISTRATOR', label: 'Administrateur complet' },
   { id: 'MANAGE_CHANNELS', label: 'Gérer les salons' },
   { id: 'MANAGE_ROLES', label: 'Gérer les rôles' },
-  { id: 'STREAM_ULTRA', label: 'Stream 1440p / 120 FPS' },
+  { id: 'STREAM_ULTRA', label: 'Stream 2K / 4K • 120 FPS' },
   { id: 'KICK_MEMBERS', label: 'Expulser des membres' },
 ];
 

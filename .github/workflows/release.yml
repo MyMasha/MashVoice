@@ -16,22 +16,51 @@ jobs:
       contents: write
     runs-on: windows-latest
     steps:
+      - name: Check if Release Assets Were Already Uploaded Locally
+        id: check_local
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -like "v*") {
+            $json = gh release view $tag --json assets 2>$null
+            if ($LASTEXITCODE -eq 0 -and $json) {
+              $rel = $json | ConvertFrom-Json
+              $hasExe = $rel.assets | Where-Object { $_.name -like "*.exe" }
+              if ($hasExe) {
+                Write-Host "Release $tag possede deja les binaires .exe publies en local — skip du build cloud !"
+                "already_published=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+                exit 0
+              }
+            }
+          }
+          "already_published=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - uses: actions/checkout@v4
+        if: steps.check_local.outputs.already_published != 'true'
 
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.check_local.outputs.already_published != 'true'
+
       - uses: Swatinem/rust-cache@v2
+        if: steps.check_local.outputs.already_published != 'true'
         with:
           workspaces: "src-tauri -> target"
+          cache-on-failure: true
 
       - uses: actions/setup-node@v4
+        if: steps.check_local.outputs.already_published != 'true'
         with:
           node-version: 22
           cache: npm
 
       - name: Install UI dependencies
-        run: npm install
+        if: steps.check_local.outputs.already_published != 'true'
+        run: npm ci
 
       - name: Build & Publish Rust Tauri v2 Windows Release (.exe / .msi) + Signed Auto-Updater
+        if: steps.check_local.outputs.already_published != 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -39,16 +68,17 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          CARGO_INCREMENTAL: "0"
+          RUSTFLAGS: "-C debuginfo=0"
         with:
           tagName: v__VERSION__
-          releaseName: 'MashVoice Singularity v__VERSION__ (Windows x64 • MashKrisp IA & Zero-IP Zyntra)'
+          releaseName: 'MashVoice Singularity v__VERSION__ (Windows x64 • Stream 4K 120FPS Sans Freeze & MashKrisp IA)'
           releaseBody: |
             ### ✨ MashVoice Singularity v__VERSION__ (Windows x64 • Rust + Tauri v2)
-            - **🛡️ MashKrisp™ IA (Isolation Vocale Anti-Clavier)** : Filtre DSP `AudioWorklet` temps réel supprimant les clics de clavier mécanique, souffles PC et bruits de bureau.
-            - **🎙️ Réparation & Hot-Plug Micro Instantané** : Redemande d'autorisation micro en 1 clic et remplacement à chaud sur les appels actifs.
-            - **🎵 Musiques d'Appels & Sons UI** : Sonnerie d'appel entrant, musique d'attente d'appel sortant, sons de messages, vocal et stream.
-            - **⚙️ Paramètres Serveur Complets & Menu Clic-Droit** : Menu contextuel complet + administration multi-onglets.
-            - **🚀 Auto-Updater 1-Clic Sans SmartScreen & Changelog** : Pastille dorée `Mise à jour`, remplacement atomique `.exe` sans `Zone.Identifier` et affichage automatique du Changelog au redémarrage.
+            - **🚫 Zéro Barre Flottante en Jeu** : La barre Windows/WebView2 (`partage votre écran`) est automatiquement détectée et masquée en arrière-plan (< 75 ms).
+            - **🎞️ Choix Complet Stream (`720p, 1080p, 2K, 4K` & `15, 30, 60, 120 FPS`)** : Nouvelle fenêtre de lancement + sélecteur en direct jusqu'à 4K 120 FPS.
+            - **🧊 Correctif Anti-Freeze Minecraft & OpenGL Plein Écran** : Désactivation native `CalculateNativeWinOcclusion` + Anti-EcoQoS Windows 11 + Watchdog WebRTC.
+            - **🛡️ MashKrisp™ IA + Réparation Micro 1-Clic + Auto-Updater Sans SmartScreen & Changelog**.
 
             #### ⚡ Installation Rapide Sans Pop-Up Bleue SmartScreen (PowerShell)
             ```powershell
@@ -59,6 +89,7 @@ jobs:
           uploadPlainBinary: true
 
       - name: Package Portable ZIP & Upload SmartScreen-Free Installer Script
+        if: steps.check_local.outputs.already_published != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -46,7 +46,7 @@ const PERM_LABELS = [
   { id: 'ADMIN', label: 'Administrateur complet' },
   { id: 'MANAGE_SERVER', label: 'Gérer le serveur' },
   { id: 'MANAGE_CHANNELS', label: 'Gérer les salons' },
-  { id: 'STREAM_HD', label: 'Stream 1080p/1440p 120 FPS' },
+  { id: 'STREAM_HD', label: 'Stream 720p / 1080p / 2K / 4K • 15–120 FPS' },
 ];
 
 export default function ServerSettingsModal({
@@ -615,9 +615,16 @@ export default function ServerSettingsModal({
                       value={chQuality}
                       onChange={(e) => setChQuality(e.target.value)}
                     >
-                      <option value="1080p 60FPS">1080p 60FPS</option>
-                      <option value="1080p 120FPS">1080p 120FPS</option>
-                      <option value="1440p 120FPS">1440p 120FPS</option>
+                      <option value="720p 15FPS">720p • 15 FPS</option>
+                      <option value="720p 30FPS">720p • 30 FPS</option>
+                      <option value="720p 60FPS">720p • 60 FPS</option>
+                      <option value="1080p 30FPS">1080p • 30 FPS</option>
+                      <option value="1080p 60FPS">1080p • 60 FPS</option>
+                      <option value="1080p 120FPS">1080p • 120 FPS</option>
+                      <option value="2K 60FPS">2K • 60 FPS</option>
+                      <option value="2K 120FPS">2K • 120 FPS</option>
+                      <option value="4K 60FPS">4K • 60 FPS</option>
+                      <option value="4K 120FPS">4K • 120 FPS</option>
                     </select>
                   ) : (
                     <div />
