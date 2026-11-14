@@ -106,8 +106,15 @@ impl AppState {
             raw_tokens_by_jti: RwLock::new(raw_map),
         });
 
-        // Background 15-second Zero-Trust enforcement sweep
-        let bg = Arc::clone(&state);
+        if tokio::runtime::Handle::try_current().is_ok() {
+            state.spawn_revocation_watchdog();
+        }
+
+        state
+    }
+
+    pub fn spawn_revocation_watchdog(self: &Arc<Self>) {
+        let bg = Arc::clone(self);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(15));
             loop {
@@ -127,8 +134,6 @@ impl AppState {
                 }
             }
         });
-
-        state
     }
 
     fn broadcast_all(&self, payload: &Value, exclude_peer: Option<&str>) {

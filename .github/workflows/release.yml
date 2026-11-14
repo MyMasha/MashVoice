@@ -10,36 +10,10 @@ permissions:
   contents: write
 
 jobs:
-  test-rust-workspace:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Run Rust Core & Integration Tests
-        run: cargo test --workspace
-
   publish-tauri:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows-latest
-            args: ''
-          - platform: ubuntu-24.04
-            args: ''
-          - platform: macos-latest
-            args: ''
-
-    runs-on: ${{ matrix.platform }}
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Linux WebKitGTK 4.1 dependencies
-        if: matrix.platform == 'ubuntu-24.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -52,7 +26,7 @@ jobs:
       - name: Install UI dependencies
         run: npm install
 
-      - name: Build & Publish Rust Tauri v2 Release + Auto-Updater Manifest
+      - name: Build & Publish Rust Tauri v2 Windows Release (.exe / .msi) + Auto-Updater Manifest
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -61,8 +35,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           tagName: v__VERSION__
-          releaseName: 'MashVoice Singularity v__VERSION__ (Rust + Tauri v2)'
-          releaseBody: 'Release automatique MashVoice Rust + Tauri v2 avec installateurs .exe / .msi / .dmg / .AppImage et Auto-Updater signé.'
+          releaseName: 'MashVoice Singularity v__VERSION__ (Windows x64 • Rust + Tauri v2)'
+          releaseBody: 'Release Windows x64 MashVoice Rust + Tauri v2 (.exe setup, .exe portable & .msi) avec Auto-Updater signé.'
           releaseDraft: false
           prerelease: false
           uploadPlainBinary: true

@@ -4,7 +4,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-use sysinfo::{Pid, ProcessesToUpdate, System};
+use sysinfo::{CpuRefreshKind, Pid, ProcessesToUpdate, System};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,8 +90,9 @@ impl HardwareController {
             .and_then(|s| serde_json::from_str::<HardwareConfig>(&s).ok())
             .unwrap_or_default();
 
-        let mut sys = System::new_all();
+        let mut sys = System::new();
         sys.refresh_memory();
+        sys.refresh_cpu_list(CpuRefreshKind::new());
 
         Self {
             cfg_path,

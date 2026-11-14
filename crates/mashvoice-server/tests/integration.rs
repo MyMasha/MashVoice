@@ -282,3 +282,16 @@ async fn mobile_qr_scan_authenticates_pc_and_p2p_signaling_works() {
 
     let _ = std::fs::remove_dir_all(tmp_dir);
 }
+
+#[test]
+fn tauri_gui_main_thread_setup_never_panics_outside_tokio() {
+    let join = std::thread::spawn(|| {
+        let tmp = std::env::temp_dir().join(format!("mashvoice-gui-test-{}", uuid::Uuid::new_v4()));
+        let (_router, state) = build_router(&tmp, None);
+        let specs = state.hardware.host_specs();
+        assert!(specs.cpu_cores >= 1);
+        let _ = std::fs::remove_dir_all(&tmp);
+    });
+    join.join()
+        .expect("build_router on non-Tokio GUI thread must never panic");
+}
