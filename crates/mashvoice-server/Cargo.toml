@@ -1,0 +1,21 @@
+[package]
+name = "mashvoice-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+axum = { version = "0.7", features = ["ws", "macros"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
+mashvoice-core = { path = "../mashvoice-core" }
+parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.42", features = ["full"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio-tungstenite = "0.24"

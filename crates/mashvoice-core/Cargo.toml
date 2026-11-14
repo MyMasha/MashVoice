@@ -1,0 +1,22 @@
+[package]
+name = "mashvoice-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+aes-gcm = "0.10"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+hmac = "0.12"
+parking_lot = "0.12"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+semver = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+subtle = "2.6"
+sysinfo = "0.31"
+uuid = { version = "1.10", features = ["v4", "serde"] }

@@ -1,0 +1,18 @@
+{
+  "name": "MashVoice Singularity P2P",
+  "short_name": "MashVoice",
+  "description": "Appels vocaux, messages, serveurs et streams P2P ultra-fluides avec authentification QR",
+  "start_url": "/?view=mobile",
+  "display": "standalone",
+  "background_color": "#030305",
+  "theme_color": "#030305",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

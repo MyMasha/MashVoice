@@ -1,0 +1,13 @@
+target/
+node_modules/
+dist/
+data/*.json
+data/*.bin
+data/master.secret
+!data/.gitkeep
+.env
+.env.local
+*.log
+.DS_Store
+src-tauri/gen/
+src-tauri/target/

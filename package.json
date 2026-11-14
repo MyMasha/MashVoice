@@ -1,0 +1,38 @@
+{
+  "name": "mashvoice",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MashVoice Singularity 4.1 — Logiciel P2P en Rust + Tauri v2 (Messages, Vocal, Stream 120 FPS, Serveurs, App Mobile & QR Auth)",
+  "author": {
+    "name": "MyMasha",
+    "url": "https://github.com/MyMasha/MashVoice"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MyMasha/MashVoice.git"
+  },
+  "scripts": {
+    "ui:dev": "vite --host 0.0.0.0 --port 5173",
+    "ui:build": "vite build",
+    "rust:server": "cargo run --release -p mashvoice-server",
+    "rust:test": "cargo test --workspace",
+    "token:mint": "cargo run -q -p mashvoice-server -- mint-token",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:android": "tauri android build",
+    "tauri:ios": "tauri ios build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.2.0",
+    "jsqr": "^1.4.0",
+    "lucide-react": "^0.475.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.2.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.2.0"
+  }
+}

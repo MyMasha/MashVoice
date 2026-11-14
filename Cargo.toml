@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/mashvoice-core",
+  "crates/mashvoice-server",
+]
+default-members = [
+  "crates/mashvoice-core",
+  "crates/mashvoice-server",
+]
+exclude = [
+  "src-tauri",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+authors = ["MyMasha <https://github.com/MyMasha/MashVoice>"]
+license = "Proprietary"
+repository = "https://github.com/MyMasha/MashVoice"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
