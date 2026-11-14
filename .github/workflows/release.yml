@@ -22,20 +22,27 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          $ErrorActionPreference = "Continue"
+          if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
           $tag = "${{ github.ref_name }}"
           if ($tag -like "v*") {
-            $json = gh release view $tag --json assets 2>$null
+            $json = gh release view $tag --repo "${{ github.repository }}" --json assets 2>$null
             if ($LASTEXITCODE -eq 0 -and $json) {
               $rel = $json | ConvertFrom-Json
               $hasExe = $rel.assets | Where-Object { $_.name -like "*.exe" }
               if ($hasExe) {
                 Write-Host "Release $tag possede deja les binaires .exe publies en local — skip du build cloud !"
                 "already_published=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+                $global:LASTEXITCODE = 0
                 exit 0
               }
             }
           }
           "already_published=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $global:LASTEXITCODE = 0
+          exit 0
 
       - uses: actions/checkout@v4
         if: steps.check_local.outputs.already_published != 'true'

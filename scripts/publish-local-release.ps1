@@ -144,17 +144,26 @@ irm https://github.com/$Repo/releases/latest/download/install-mashvoice.ps1 | ie
 "@
 
 # Create release BEFORE pushing tag so GitHub Actions detects assets are already uploaded and skips rebuilding!
+if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+  $PSNativeCommandUseErrorActionPreference = $false
+}
+$ErrorActionPreference = "Continue"
 gh release view $tag --repo $Repo *> $null
-if ($LASTEXITCODE -eq 0) {
+$existsCode = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($existsCode -eq 0) {
   gh release upload $tag @assets --repo $Repo --clobber
 } else {
   gh release create $tag @assets --repo $Repo --title "MashVoice Singularity $tag (Windows x64)" --notes $notes
 }
 
 if (-not $SkipGitPush) {
+  $ErrorActionPreference = "Continue"
   git push origin HEAD 2>$null
   git push origin $tag 2>$null
 }
+
+$global:LASTEXITCODE = 0
 
 $sw.Stop()
 Write-Host "✓ Release $tag publiee en $([math]::Round($sw.Elapsed.TotalSeconds, 1))s sur https://github.com/$Repo/releases/tag/$tag !" -ForegroundColor Green
