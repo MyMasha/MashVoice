@@ -33,6 +33,12 @@ export default function SecureLauncher({
   const [authMode, setAuthMode] = useState('token'); // 'token' | 'qr'
   const [username, setUsername] = useState('rawsq');
   const [connectionToken, setConnectionToken] = useState('');
+  const [joinRemoteMode, setJoinRemoteMode] = useState(() =>
+    Boolean(window.mashNative?.getRemoteNode?.())
+  );
+  const [remoteNodeInput, setRemoteNodeInput] = useState(
+    () => window.mashNative?.getRemoteNode?.() || ''
+  );
   const [rememberVault, setRememberVault] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState(lockReason || '');
@@ -66,6 +72,13 @@ export default function SecureLauncher({
     };
     loadSaved();
   }, []);
+
+  // Auto-fill local Founder token on host PC when connectionToken is still empty
+  useEffect(() => {
+    if (!joinRemoteMode && !connectionToken && bootstrap?.starterTokens?.[0]?.token) {
+      setConnectionToken(bootstrap.starterTokens[0].token);
+    }
+  }, [bootstrap, joinRemoteMode, connectionToken]);
 
   const createQrChallenge = async () => {
     setQrScannedBy(null);
@@ -290,51 +303,6 @@ export default function SecureLauncher({
             authentification instantanée par <strong>QR Code Mobile</strong> et Trou Noir 3D de
             Schwarzschild à mise en veille automatique en jeu.
           </p>
-
-          <div className="preset-row" role="group" aria-label="Profils de performance">
-            <button
-              type="button"
-              id="preset-turbo"
-              className={`preset-pill ${presetQuality === 'turbo' ? 'selected' : ''}`}
-              onClick={() =>
-                onUpdateHwConfig({
-                  shaderPreset: 'turbo',
-                  turboFpsMode: true,
-                  pauseShaderInGame: true,
-                  zeroCopyCapture: true,
-                })
-              }
-            >
-              <span className="preset-dot" /> Turbo FPS (Jeu)
-            </button>
-            <button
-              type="button"
-              id="preset-balanced"
-              className={`preset-pill ${presetQuality === 'balanced' ? 'selected' : ''}`}
-              onClick={() =>
-                onUpdateHwConfig({
-                  shaderPreset: 'balanced',
-                  turboFpsMode: true,
-                  pauseShaderInGame: true,
-                })
-              }
-            >
-              <span className="preset-dot" /> Équilibré
-            </button>
-            <button
-              type="button"
-              id="preset-quality"
-              className={`preset-pill ${presetQuality === 'quality' ? 'selected' : ''}`}
-              onClick={() =>
-                onUpdateHwConfig({
-                  shaderPreset: 'quality',
-                  turboFpsMode: false,
-                })
-              }
-            >
-              <span className="preset-dot" /> Qualité Studio
-            </button>
-          </div>
         </section>
 
         {/* Right Panel switches based on Top Pill Nav */}
@@ -389,10 +357,65 @@ export default function SecureLauncher({
             )}
 
             {authMode === 'token' ? (
-              <form onSubmit={handleTokenLogin} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <form onSubmit={handleTokenLogin} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+                {window.mashNative?.setRemoteNode && (
+                  <div className="field-group">
+                    <label className="field-label">
+                      <span>Noeud P2P cible</span>
+                      <span style={{ color: 'var(--gold-primary)', fontSize: 11 }}>
+                        {joinRemoteMode ? 'Rejoindre un ami' : 'Mon PC (Hôte)'}
+                      </span>
+                    </label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        type="button"
+                        className="btn-chip"
+                        style={{
+                          flex: 1,
+                          justifyContent: 'center',
+                          borderColor: !joinRemoteMode ? 'var(--gold-primary)' : undefined,
+                          color: !joinRemoteMode ? 'var(--gold-bright)' : undefined,
+                        }}
+                        onClick={() => {
+                          setJoinRemoteMode(false);
+                          window.mashNative.setRemoteNode('');
+                        }}
+                      >
+                        Héberger sur mon PC
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-chip"
+                        style={{
+                          flex: 1,
+                          justifyContent: 'center',
+                          borderColor: joinRemoteMode ? 'var(--gold-primary)' : undefined,
+                          color: joinRemoteMode ? 'var(--gold-bright)' : undefined,
+                        }}
+                        onClick={() => setJoinRemoteMode(true)}
+                      >
+                        Rejoindre l&apos;IP d&apos;un ami
+                      </button>
+                    </div>
+                    {joinRemoteMode && (
+                      <input
+                        className="mash-input mono"
+                        style={{ marginTop: 6 }}
+                        value={remoteNodeInput}
+                        onChange={(e) => {
+                          setRemoteNodeInput(e.target.value);
+                          window.mashNative.setRemoteNode(e.target.value);
+                        }}
+                        placeholder="ex: 26.48.12.90:3080 ou 192.168.1.25:3080"
+                        autoComplete="off"
+                      />
+                    )}
+                  </div>
+                )}
+
                 <div className="field-group">
                   <label className="field-label" htmlFor="launcher-username">
-                    <span>Identifiant / Pseudo P2P</span>
+                    <span>Ton Pseudo</span>
                     <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>Chiffré E2EE</span>
                   </label>
                   <input
@@ -400,7 +423,7 @@ export default function SecureLauncher({
                     className="mash-input"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="ex: rawsq"
+                    placeholder="Entre ton pseudo (ex: Masha)"
                     autoComplete="off"
                   />
                 </div>
@@ -421,12 +444,12 @@ export default function SecureLauncher({
                   />
                 </div>
 
-                {starterTokens.some((t) => t.token) && (
+                {!joinRemoteMode && starterTokens.some((t) => t.token) && (
                   <div className="starter-token-box">
                     <div style={{ fontSize: 11, color: 'var(--gold-bright)', fontWeight: 600 }}>
-                      Tokens cryptographiques pré-initialisés (Serveur Local) :
+                      Accès propriétaire local (clique pour remplir ton Token) :
                     </div>
-                    {starterTokens.map(
+                    {starterTokens.slice(0, 1).map(
                       (t) =>
                         t.token && (
                           <div key={t.jti} className="starter-token-row">
@@ -441,7 +464,7 @@ export default function SecureLauncher({
                                 setErrorMsg('');
                               }}
                             >
-                              Utiliser ce Token
+                              {connectionToken === t.token ? '✓ Token actif' : 'Utiliser mon Token'}
                             </button>
                           </div>
                         )

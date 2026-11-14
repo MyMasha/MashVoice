@@ -302,8 +302,23 @@ pub fn build_router(data_dir: &Path, dist_dir: Option<PathBuf>) -> (Router, Arc<
 
 // --- HANDLERS ---
 
-async fn api_bootstrap_public(State(st): State<Arc<AppState>>) -> Json<Value> {
-    let hide = std::env::var("MASHVOICE_HIDE_STARTER_TOKENS").unwrap_or_default() == "true";
+fn detect_lan_ip() -> String {
+    std::net::UdpSocket::bind("0.0.0.0:0")
+        .and_then(|s| {
+            s.connect("1.1.1.1:80")?;
+            s.local_addr()
+        })
+        .map(|a| a.ip().to_string())
+        .unwrap_or_else(|_| "127.0.0.1".into())
+}
+
+async fn api_bootstrap_public(
+    State(st): State<Arc<AppState>>,
+    addr: Option<ConnectInfo<SocketAddr>>,
+) -> Json<Value> {
+    let is_local_owner = addr.map(|a| a.0.ip().is_loopback()).unwrap_or(true);
+    let hide = !is_local_owner
+        || std::env::var("MASHVOICE_HIDE_STARTER_TOKENS").unwrap_or_default() == "true";
     let starter: Vec<Value> = st
         .store
         .state
@@ -330,6 +345,7 @@ async fn api_bootstrap_public(State(st): State<Arc<AppState>>) -> Json<Value> {
         "githubRepo": format!("{}/{}", GITHUB_ORG, GITHUB_REPO),
         "prefilledGithubTokenUrl": PREFILLED_GITHUB_TOKEN_URL,
         "hostSpecs": st.hardware.host_specs(),
+        "lanIp": detect_lan_ip(),
         "starterTokens": starter,
     }))
 }
@@ -767,6 +783,7 @@ async fn api_workspace_state(
 
     Ok(Json(json!({
         "me": me,
+        "lanIp": detect_lan_ip(),
         "users": users,
         "friends": friends,
         "dmChannels": dm_channels,

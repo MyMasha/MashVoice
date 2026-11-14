@@ -94,10 +94,10 @@ pub fn run() {
             let (router, app_state) = build_router(&data_dir, None);
             app.manage(Arc::clone(&app_state));
 
-            // Bind synchronously on 127.0.0.1:3080 (with automatic free-port fallback if 3080 is busy)
-            // so the socket is already listening before WebView2 fires its first fetch('/api/...').
-            let std_listener = StdTcpListener::bind(("127.0.0.1", 3080))
-                .or_else(|_| StdTcpListener::bind(("127.0.0.1", 0)))?;
+            // Bind synchronously on 0.0.0.0:3080 (with automatic free-port fallback if 3080 is busy)
+            // so friends on LAN / VPN / Port-Forward can join this P2P host, and WebView2 connects via 127.0.0.1.
+            let std_listener = StdTcpListener::bind(("0.0.0.0", 3080))
+                .or_else(|_| StdTcpListener::bind(("0.0.0.0", 0)))?;
             std_listener.set_nonblocking(true)?;
             let port = std_listener.local_addr().map(|a| a.port()).unwrap_or(3080);
 

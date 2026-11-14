@@ -28,6 +28,7 @@ import {
   Minus,
   Square,
   X,
+  KeyRound,
 } from 'lucide-react';
 import BlackHoleCanvas from './BlackHoleCanvas.jsx';
 import SettingsModal from './SettingsModal.jsx';
@@ -731,6 +732,64 @@ export default function DesktopApp({
               </div>
 
               <div className="sidebar-scroll">
+                <div
+                  style={{
+                    padding: '9px 10px',
+                    borderRadius: 9,
+                    background: 'rgba(232, 168, 73, 0.07)',
+                    border: '1px solid rgba(232, 168, 73, 0.24)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    marginBottom: 4,
+                  }}
+                >
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--gold-bright)', letterSpacing: '0.04em' }}>
+                    INVITER UN AMI SUR MON NOEUD P2P
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.35 }}>
+                    1. Crée un <strong>Token Ami</strong> dans Sécurité.<br />
+                    2. Envoie-lui ton IP Hôte (LAN / Radmin / Tailscale / Port 3080) :
+                  </div>
+                  <div style={{ display: 'flex', gap: 5 }}>
+                    <button
+                      type="button"
+                      className="btn-chip"
+                      style={{ flex: 1, justifyContent: 'center', fontSize: 11 }}
+                      title="Copier mon adresse Hôte P2P"
+                      onClick={() => {
+                        const hostAddr = `${workspace.lanIp || '127.0.0.1'}:3080`;
+                        navigator.clipboard?.writeText(hostAddr);
+                        setFriendFeedback(`✓ Adresse Hôte copiée : ${hostAddr}`);
+                        setTimeout(() => setFriendFeedback(''), 2600);
+                      }}
+                    >
+                      <Copy size={12} /> {workspace.lanIp || '127.0.0.1'}:3080
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-chip"
+                      style={{ fontSize: 11 }}
+                      title="Générer un Token de connexion MASH-SV4 pour un ami"
+                      onClick={() => setShowSettings(true)}
+                    >
+                      <KeyRound size={12} /> Token
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-chip"
+                    style={{ justifyContent: 'center', fontSize: 10.5 }}
+                    onClick={() => {
+                      navigator.clipboard?.writeText(me?.peerId || me?.username || '');
+                      setFriendFeedback(`✓ Ton Peer ID copié : ${me?.peerId || me?.username}`);
+                      setTimeout(() => setFriendFeedback(''), 2600);
+                    }}
+                  >
+                    <Copy size={11} /> Mon ID : {me?.username}#{me?.tag || '0001'}
+                  </button>
+                </div>
+
                 <form onSubmit={handleAddFriend} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div className="cat-header">AJOUTER UN AMI (PSEUDO OU PEER ID)</div>
                   <div style={{ display: 'flex', gap: 6 }}>

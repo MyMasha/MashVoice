@@ -15,21 +15,39 @@ export function installRustBridge() {
   );
 
   if (isTauri) {
-    let apiOrigin = window.__MASH_API_ORIGIN__ || 'http://127.0.0.1:3080';
-    let wsOrigin = window.__MASH_WS_ORIGIN__ || 'ws://127.0.0.1:3080';
+    let localApiOrigin = window.__MASH_API_ORIGIN__ || 'http://127.0.0.1:3080';
+    let localWsOrigin = window.__MASH_WS_ORIGIN__ || 'ws://127.0.0.1:3080';
+    let remoteNodeHttp = (localStorage.getItem('mashvoice.remoteNodeUrl') || '').trim();
+
+    const normalizeRemote = (raw) => {
+      const s = (raw || '').trim().replace(/\/+$/, '');
+      if (!s) return '';
+      if (/^https?:\/\//i.test(s)) return s;
+      return `http://${s.includes(':') ? s : `${s}:3080`}`;
+    };
+    remoteNodeHttp = normalizeRemote(remoteNodeHttp);
+
+    const resolveApiOrigin = () =>
+      remoteNodeHttp || window.__MASH_API_ORIGIN__ || localApiOrigin;
+    const resolveWsOrigin = () => {
+      if (remoteNodeHttp) {
+        return remoteNodeHttp.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
+      }
+      return window.__MASH_WS_ORIGIN__ || localWsOrigin;
+    };
 
     const backendReady = invoke('get_backend_url')
       .then((info) => {
-        if (info?.httpOrigin) apiOrigin = info.httpOrigin;
-        if (info?.wsOrigin) wsOrigin = info.wsOrigin;
+        if (info?.httpOrigin) localApiOrigin = info.httpOrigin;
+        if (info?.wsOrigin) localWsOrigin = info.wsOrigin;
       })
       .catch(() => {});
 
-    // Rewrite relative /api/... calls on http://tauri.localhost to the embedded local Rust Axum server
+    // Rewrite relative /api/... calls to either local Rust server or friend's P2P host
     const nativeFetch = window.fetch.bind(window);
     window.fetch = async (input, init) => {
       await backendReady;
-      const curApi = window.__MASH_API_ORIGIN__ || apiOrigin;
+      const curApi = resolveApiOrigin();
       if (typeof input === 'string') {
         if (input.startsWith('/api/') || input === '/api') {
           return nativeFetch(`${curApi}${input}`, init);
@@ -42,14 +60,16 @@ export function installRustBridge() {
       return nativeFetch(input, init);
     };
 
-    // Rewrite ws://tauri.localhost/ws... to ws://127.0.0.1:<port>/ws...
+    // Rewrite WebSocket /ws... to local Rust server or friend's P2P host
     const NativeWebSocket = window.WebSocket;
     const PatchedWebSocket = function (url, protocols) {
       let target = String(url);
-      const curWs = window.__MASH_WS_ORIGIN__ || wsOrigin;
-      if (target.includes('tauri.localhost/ws') || target.startsWith('/ws')) {
+      const curWs = resolveWsOrigin();
+      if (target.includes('tauri.localhost/ws') || target.startsWith('/ws') || remoteNodeHttp) {
         const idx = target.indexOf('/ws');
-        target = `${curWs}${target.slice(idx)}`;
+        if (idx !== -1) {
+          target = `${curWs}${target.slice(idx)}`;
+        }
       }
       return protocols !== undefined
         ? new NativeWebSocket(target, protocols)
@@ -65,6 +85,16 @@ export function installRustBridge() {
     window.mashNative = {
       isTauri: true,
       isElectron: true, // enables custom frameless Singularity window controls
+      getRemoteNode: () => remoteNodeHttp,
+      setRemoteNode: (url) => {
+        remoteNodeHttp = normalizeRemote(url);
+        if (remoteNodeHttp) {
+          localStorage.setItem('mashvoice.remoteNodeUrl', remoteNodeHttp);
+        } else {
+          localStorage.removeItem('mashvoice.remoteNodeUrl');
+        }
+        return remoteNodeHttp;
+      },
       windowControl: (action) => invoke('window_control', { action }),
       getHardwareInfo: () => invoke('get_hardware_info'),
       saveHardwareConfig: (patch) => invoke('save_hardware_config', { patch }),
