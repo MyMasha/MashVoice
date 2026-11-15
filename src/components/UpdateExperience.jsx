@@ -22,7 +22,7 @@ export function UpdateTopPill({ updaterStatus, installing, onInstallUpdate, onOp
         title="Afficher les nouveautés de cette version (Changelog)"
       >
         <Sparkles size={11} />
-        <span>Quoi de neuf v{updaterStatus?.currentVersion || '1.0.6'}</span>
+        <span>v{updaterStatus?.currentVersion || '1.0.6'}</span>
       </button>
     );
   }
@@ -91,7 +91,7 @@ export function UpdateFloatingPopup({
     <div className="update-floating-toast" role="region" aria-label="Mise à jour MashVoice disponible">
       <div className="update-toast-glow" />
       <div className="update-toast-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
           <span className="update-toast-icon">
             {isDownloading ? <RefreshCw size={15} className="spin-icon" /> : <Download size={15} />}
           </span>
@@ -101,12 +101,12 @@ export function UpdateFloatingPopup({
                 ? `Mise à jour v${status?.latestVersion || ''} en cours...`
                 : isReady
                   ? 'Mise à jour installée — Redémarrage...'
-                  : `Nouvelle version v${status?.latestVersion} disponible !`}
+                  : `Nouvelle version v${status?.latestVersion} disponible`}
             </div>
             <div className="update-toast-sub">
               {isDownloading
-                ? `Remplacement atomique sans SmartScreen (${pct}%)`
-                : 'Clique pour installer automatiquement et voir le Changelog'}
+                ? `Remplacement atomique signé (${pct}%)`
+                : 'Installer en 1 clic sans pop-up SmartScreen'}
             </div>
           </div>
         </div>
@@ -129,7 +129,7 @@ export function UpdateFloatingPopup({
       )}
 
       {errorMsg && (
-        <div style={{ fontSize: 11, color: '#ff9494', lineHeight: 1.35 }}>{errorMsg}</div>
+        <div style={{ fontSize: 11, color: 'var(--crimson)', lineHeight: 1.35 }}>{errorMsg}</div>
       )}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -199,7 +199,7 @@ export function ChangelogModal({ changelog, currentVersion, onClose }) {
           {parts.map((part, i) => {
             if (part.startsWith('**') && part.endsWith('**')) {
               return (
-                <strong key={i} style={{ color: 'var(--gold-ivory)' }}>
+                <strong key={i} style={{ color: 'var(--text-primary)' }}>
                   {part.slice(2, -2)}
                 </strong>
               );
@@ -224,18 +224,18 @@ export function ChangelogModal({ changelog, currentVersion, onClose }) {
         <div className="changelog-hero">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span className="singularity-badge" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <Sparkles size={11} /> MISE À JOUR INSTALLÉE • v{changelog.version || currentVersion}
+              <Sparkles size={11} color="var(--gold-primary)" /> Version v{changelog.version || currentVersion}
             </span>
             <button type="button" className="win-btn" onClick={onClose} aria-label="Fermer">
               <X size={16} />
             </button>
           </div>
           <h2 className="changelog-title">
-            {changelog.title || `Nouveautés MashVoice Singularity v${changelog.version || currentVersion}`}
+            {changelog.title || `Nouveautés MashVoice v${changelog.version || currentVersion}`}
           </h2>
           <div className="changelog-meta">
-            <CheckCircle2 size={13} color="#48c78e" />
-            <span>Binaire signé vérifié (Ed25519) • Relais Zero-IP zyntra.win actif</span>
+            <CheckCircle2 size={13} color="var(--emerald)" />
+            <span>Binaire signé vérifié (Ed25519) · Relais Zero-IP zyntra.win actif</span>
           </div>
         </div>
 
@@ -243,11 +243,11 @@ export function ChangelogModal({ changelog, currentVersion, onClose }) {
 
         <div className="changelog-footer">
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, color: 'var(--text-muted)' }}>
-            <ShieldCheck size={14} color="#f5c26b" />
-            <span>Open Source MIT • MyMasha/MashVoice</span>
+            <ShieldCheck size={14} color="var(--gold-primary)" />
+            <span>Open Source MIT · MyMasha/MashVoice</span>
           </div>
-          <button type="button" className="btn-gold-cta" style={{ padding: '9px 22px' }} onClick={onClose}>
-            Super, découvrir MashVoice !
+          <button type="button" className="btn-gold-cta" style={{ padding: '8px 20px' }} onClick={onClose}>
+            Continuer
           </button>
         </div>
       </div>

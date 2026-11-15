@@ -18,6 +18,10 @@ import {
   Download,
   Music,
   Waves,
+  PhoneCall,
+  MessageSquare,
+  UserPlus,
+  ShieldCheck,
 } from 'lucide-react';
 import { KrispVoiceProcessor, loadSavedKrispMode } from '../lib/krispEngine.js';
 import {
@@ -233,14 +237,14 @@ export default function SettingsModal({
         <aside className="settings-nav">
           <div
             style={{
-              padding: '0 10px 10px',
-              fontSize: 10.5,
+              padding: '2px 10px 10px',
+              fontSize: 10,
               fontWeight: 700,
-              letterSpacing: '0.1em',
-              color: 'var(--gold-primary)',
+              letterSpacing: '0.09em',
+              color: 'var(--text-muted)',
             }}
           >
-            PARAMÈTRES MASHVOICE
+            PARAMÈTRES
           </div>
 
           <button
@@ -248,42 +252,42 @@ export default function SettingsModal({
             className={`settings-nav-btn ${tab === 'audio' ? 'active' : ''}`}
             onClick={() => setTab('audio')}
           >
-            <Mic size={16} /> Voix, MashKrisp &amp; Sons
+            <Mic size={15} /> Voix, MashKrisp &amp; Sons
           </button>
           <button
             type="button"
             className={`settings-nav-btn ${tab === 'hardware' ? 'active' : ''}`}
             onClick={() => setTab('hardware')}
           >
-            <Cpu size={16} /> GPU, CPU &amp; RAM
+            <Cpu size={15} /> GPU, CPU &amp; RAM
           </button>
           <button
             type="button"
             className={`settings-nav-btn ${tab === 'gaming' ? 'active' : ''}`}
             onClick={() => setTab('gaming')}
           >
-            <Gamepad2 size={16} /> Mode Jeu &amp; Stream
+            <Gamepad2 size={15} /> Mode Jeu &amp; Stream
           </button>
           <button
             type="button"
             className={`settings-nav-btn ${tab === 'security' ? 'active' : ''}`}
             onClick={() => setTab('security')}
           >
-            <ShieldAlert size={16} /> Sécurité &amp; Tokens
+            <ShieldAlert size={15} /> Sécurité &amp; Tokens
           </button>
           <button
             type="button"
             className={`settings-nav-btn ${tab === 'updater' ? 'active' : ''}`}
             onClick={() => setTab('updater')}
           >
-            <RefreshCw size={16} /> Auto-Updater &amp; Changelog
+            <RefreshCw size={15} /> Mises à jour
           </button>
           <button
             type="button"
             className={`settings-nav-btn ${tab === 'profile' ? 'active' : ''}`}
             onClick={() => setTab('profile')}
           >
-            <User size={16} /> Profil &amp; Identité P2P
+            <User size={15} /> Profil &amp; Identité P2P
           </button>
 
           <div style={{ flex: 1 }} />
@@ -299,12 +303,12 @@ export default function SettingsModal({
 
         <section className="settings-content">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20 }}>
-              {tab === 'audio' && 'Voix Opus, MashKrisp™ Anti-Clavier & Musiques d’Appels'}
-              {tab === 'hardware' && 'Allocation Matérielle GPU, CPU & Mémoire RAM'}
-              {tab === 'gaming' && 'Optimisation En Jeu « Turbo FPS » & Qualité Stream'}
-              {tab === 'security' && 'Sécurité Zero-Trust & Tokens de Connexion'}
-              {tab === 'updater' && 'Auto-Updater 1-Clic & Notes de Version (Changelog)'}
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, letterSpacing: '-0.02em' }}>
+              {tab === 'audio' && 'Voix Opus, MashKrisp™ & UI Sound Design'}
+              {tab === 'hardware' && 'Allocation Matérielle GPU, CPU & RAM'}
+              {tab === 'gaming' && 'Mode Jeu « Turbo FPS » & Qualité Stream'}
+              {tab === 'security' && 'Sécurité Zero-Trust & Tokens MASH-SV4'}
+              {tab === 'updater' && 'Auto-Updater 1-Clic & Notes de Version'}
               {tab === 'profile' && 'Profil Utilisateur & Identité P2P'}
             </h2>
             <button type="button" className="win-btn" onClick={onClose} aria-label="Fermer">
@@ -317,20 +321,26 @@ export default function SettingsModal({
               {/* 1. MashKrisp Voice Isolation Card */}
               <div className="hw-card krisp-feature-card">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                    <Waves size={18} color="#48c78e" />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <Waves size={18} color="var(--emerald)" />
                     <div>
-                      <strong style={{ fontSize: 14 }}>
-                        MashKrisp™ IA — Isolation Vocale Anti-Clavier (Équivalent Discord Krisp)
+                      <strong style={{ fontSize: 13.5 }}>
+                        MashKrisp™ IA — Isolation Vocale Anti-Clavier
                       </strong>
                       <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                        Supprime en temps réel (&lt; 3 ms) les clics de clavier mécanique, clics souris,
-                        coups sur le bureau et souffles PC pour ne transmettre que votre voix.
+                        Supprime en temps réel (&lt; 3 ms) les switchs mécaniques, clics souris et souffles PC.
                       </div>
                     </div>
                   </div>
-                  <span className="singularity-badge" style={{ color: '#6ce0ad', borderColor: 'rgba(72,199,142,0.4)' }}>
-                    {krispMode === 'off' ? 'OFF' : 'ACTIF'}
+                  <span
+                    className="singularity-badge"
+                    style={{
+                      color: krispMode === 'off' ? 'var(--text-muted)' : 'var(--emerald)',
+                      borderColor: krispMode === 'off' ? 'var(--border-subtle)' : 'rgba(62, 207, 142, 0.28)',
+                      background: krispMode === 'off' ? 'transparent' : 'var(--emerald-bg)',
+                    }}
+                  >
+                    {krispMode === 'off' ? 'BRUT' : krispMode === 'ultra' ? '-36 dB · ACTIF' : '-18 dB · ACTIF'}
                   </span>
                 </div>
 
@@ -338,17 +348,20 @@ export default function SettingsModal({
                   {[
                     {
                       id: 'ultra',
-                      title: '🛡️ Ultra Anti-Clavier (Recommandé)',
+                      title: 'Ultra Anti-Clavier',
+                      badge: 'Recommandé',
                       desc: 'Coupe les switchs mécaniques (-36 dB), chocs bureau et ventilateurs.',
                     },
                     {
                       id: 'standard',
-                      title: '🎙️ Standard Naturel',
-                      desc: 'Réduction douce (-18 dB) idéale pour environnements déjà calmes.',
+                      title: 'Standard Naturel',
+                      badge: '-18 dB',
+                      desc: 'Réduction douce idéale pour environnements déjà calmes.',
                     },
                     {
                       id: 'off',
-                      title: 'Studio Brut (Désactivé)',
+                      title: 'Studio Brut',
+                      badge: '0 filtre',
                       desc: 'Aucune porte spectrale — transmet l’intégralité du micro studio.',
                     },
                   ].map((opt) => (
@@ -358,7 +371,15 @@ export default function SettingsModal({
                       className={`hw-choice ${krispMode === opt.id ? 'selected' : ''}`}
                       onClick={() => handleSelectKrisp(opt.id)}
                     >
-                      <strong style={{ fontSize: 12.5 }}>{opt.title}</strong>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 6 }}>
+                        <strong style={{ fontSize: 12.5, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                          {opt.id === 'ultra' && <ShieldCheck size={13} color="var(--emerald)" />}
+                          {opt.title}
+                        </strong>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
+                          {opt.badge}
+                        </span>
+                      </div>
                       <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{opt.desc}</span>
                     </button>
                   ))}
@@ -368,7 +389,7 @@ export default function SettingsModal({
               {/* 2. Microphone Selection, Instant Permission Re-Request & Live Test */}
               <div className="hw-card">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                  <strong>Périphériques Microphone &amp; Réparation d&apos;Autorisation</strong>
+                  <strong style={{ fontSize: 13.5 }}>Périphériques Audio &amp; Test en Direct</strong>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     <button
                       type="button"
@@ -401,13 +422,11 @@ export default function SettingsModal({
                   <div
                     style={{
                       padding: '8px 12px',
-                      borderRadius: 8,
-                      background: micRepairNotice.startsWith('✓')
-                        ? 'var(--emerald-bg)'
-                        : 'rgba(232, 168, 73, 0.12)',
-                      border: '1px solid var(--gold-border)',
+                      borderRadius: 'var(--radius-xs)',
+                      background: micRepairNotice.startsWith('✓') ? 'var(--emerald-bg)' : 'var(--gold-muted)',
+                      border: `1px solid ${micRepairNotice.startsWith('✓') ? 'rgba(62, 207, 142, 0.28)' : 'var(--gold-border)'}`,
                       fontSize: 12,
-                      color: micRepairNotice.startsWith('✓') ? '#6ce0ad' : 'var(--gold-bright)',
+                      color: micRepairNotice.startsWith('✓') ? 'var(--emerald)' : 'var(--gold-bright)',
                     }}
                   >
                     {micRepairNotice || micState?.error}
@@ -448,8 +467,8 @@ export default function SettingsModal({
                 <div
                   style={{
                     padding: '10px 12px',
-                    borderRadius: 10,
-                    background: 'rgba(0,0,0,0.35)',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--bg-void)',
                     border: '1px solid var(--border-subtle)',
                     display: 'flex',
                     alignItems: 'center',
@@ -462,28 +481,28 @@ export default function SettingsModal({
                     style={{ padding: '7px 14px', fontSize: 12, flexShrink: 0 }}
                     onClick={handleStartMicTest}
                   >
-                    {testingMic ? 'Arrêter le test' : 'Tester mon micro & MashKrisp'}
+                    {testingMic ? 'Arrêter le test' : 'Tester le micro'}
                   </button>
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-secondary)' }}>
                       <span>
                         {testingMic
                           ? micMeter.voiceActive
-                            ? '🟢 Voix détectée — transmise clairement'
-                            : '🛡️ Bruit / Clavier filtré par MashKrisp'
-                          : ' Tapez au clavier pendant le test pour vérifier le filtrage MashKrisp™'}
+                            ? 'Voix détectée — transmise clairement'
+                            : 'Bruit & clavier filtrés par MashKrisp™'
+                          : 'Tapez au clavier pendant le test pour vérifier le filtrage MashKrisp™'}
                       </span>
                       {testingMic && micMeter.suppressedDb > 0 && (
-                        <span style={{ fontFamily: 'var(--font-mono)', color: '#48c78e' }}>
-                          -{micMeter.suppressedDb} dB bruit filtré
+                        <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--emerald)' }}>
+                          -{micMeter.suppressedDb} dB filtrés
                         </span>
                       )}
                     </div>
                     <div
                       style={{
-                        height: 8,
+                        height: 6,
                         borderRadius: 99,
-                        background: 'rgba(255,255,255,0.08)',
+                        background: 'rgba(255, 255, 255, 0.06)',
                         overflow: 'hidden',
                       }}
                     >
@@ -491,7 +510,7 @@ export default function SettingsModal({
                         style={{
                           width: `${Math.round((testingMic ? micMeter.outputLevel : 0) * 100)}%`,
                           height: '100%',
-                          background: 'linear-gradient(90deg, #48c78e, #f5c26b)',
+                          background: 'var(--emerald)',
                           transition: 'width 80ms linear',
                         }}
                       />
@@ -500,12 +519,12 @@ export default function SettingsModal({
                 </div>
               </div>
 
-              {/* 3. Discord-Style Call Ringtones & Event Sounds */}
+              {/* 3. Discord-Style UI Sound Design & Ringtones */}
               <div className="hw-card">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Music size={17} color="#f5c26b" />
-                    <strong>Musiques d&apos;Appels &amp; Sons d&apos;Événements (Style Discord)</strong>
+                    <Music size={16} color="var(--gold-primary)" />
+                    <strong style={{ fontSize: 13.5 }}>UI Sound Design &amp; Sonneries Stéréo (Style Discord)</strong>
                   </div>
                   <button
                     type="button"
@@ -513,14 +532,14 @@ export default function SettingsModal({
                     onClick={() => handleUpdateSfx({ enabled: !sfxConfig.enabled })}
                   >
                     {sfxConfig.enabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
-                    {sfxConfig.enabled ? 'Sons Activés' : 'Sons Coupés'}
+                    {sfxConfig.enabled ? 'Sons activés' : 'Sons coupés'}
                   </button>
                 </div>
 
                 <div className="field-group">
                   <div className="field-label">
                     <span>Volume des sonneries &amp; notifications</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
                       {Math.round((sfxConfig.volume ?? 0.75) * 100)}%
                     </span>
                   </div>
@@ -535,7 +554,7 @@ export default function SettingsModal({
                   />
                 </div>
 
-                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12.5 }}>
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12.5 }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                     <input
                       type="checkbox"
@@ -561,7 +580,7 @@ export default function SettingsModal({
                       onChange={(e) => handleUpdateSfx({ voiceSounds: e.target.checked })}
                       style={{ accentColor: 'var(--gold-primary)' }}
                     />
-                    Rejoindre / Quitter vocal, Mute &amp; Stream
+                    Salons vocaux, Mute &amp; Stream
                   </label>
                 </div>
 
@@ -571,28 +590,28 @@ export default function SettingsModal({
                     className="btn-chip"
                     onClick={() => mashSounds.playIncomingRingPhrase()}
                   >
-                    🎵 Tester Sonnerie Entrante
+                    <PhoneCall size={12} /> Sonnerie entrante
                   </button>
                   <button
                     type="button"
                     className="btn-chip"
                     onClick={() => mashSounds.playOutgoingRingPhrase()}
                   >
-                    📞 Tester Musique d&apos;Appel Sortant
+                    <Waves size={12} /> Appel sortant
                   </button>
                   <button
                     type="button"
                     className="btn-chip"
                     onClick={() => mashSounds.messageIn()}
                   >
-                    💬 Tester Son Message
+                    <MessageSquare size={12} /> Message reçu
                   </button>
                   <button
                     type="button"
                     className="btn-chip"
                     onClick={() => mashSounds.friendRequest()}
                   >
-                    ✨ Tester Demande d&apos;Ami
+                    <UserPlus size={12} /> Demande d&apos;ami
                   </button>
                 </div>
               </div>
@@ -604,7 +623,7 @@ export default function SettingsModal({
               <div className="hw-card">
                 <div className="field-label">
                   <span>1. Moteur d&apos;Exécution Graphique (GPU vs CPU)</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
                     {hwConfig.renderBackend}
                   </span>
                 </div>
@@ -644,7 +663,7 @@ export default function SettingsModal({
               <div className="hw-card">
                 <div className="field-label">
                   <span>2. Encodeur Matériel de Stream P2P</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
                     {streamSettings.preferredCodec}
                   </span>
                 </div>
@@ -690,7 +709,7 @@ export default function SettingsModal({
               <div className="hw-card">
                 <div className="field-label">
                   <span>3. Allocation Mémoire RAM Maximale</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
                     {hwConfig.maxRamMb} Mo ({(hwConfig.maxRamMb / 1024).toFixed(2)} Go)
                   </span>
                 </div>
@@ -708,8 +727,8 @@ export default function SettingsModal({
               <div className="hw-card">
                 <div className="field-label">
                   <span>4. Threads CPU &amp; Priorité Système</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
-                    {hwConfig.cpuThreads} Threads • {hwConfig.processPriority}
+                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-primary)' }}>
+                    {hwConfig.cpuThreads} Threads · {hwConfig.processPriority}
                   </span>
                 </div>
                 <input
@@ -728,19 +747,18 @@ export default function SettingsModal({
           {tab === 'gaming' && (
             <>
               <div className="hw-card">
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                   <div>
-                    <strong style={{ fontSize: 14 }}>
+                    <strong style={{ fontSize: 13.5 }}>
                       Bouclier de Performance « Mode Jeu Turbo FPS »
                     </strong>
                     <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-                      Coupe automatiquement le shader 3D Schwarzschild dès qu&apos;un jeu (MashClient,
-                      Minecraft, Valorant, CS2...) est détecté, tout en gardant le flux WebRTC fluide à
-                      60/120 FPS.
+                      Coupe automatiquement le shader 3D Schwarzschild dès qu&apos;un jeu est détecté,
+                      tout en gardant le flux WebRTC fluide à 60 / 120 FPS.
                     </div>
                   </div>
                   <button type="button" className="btn-chip" onClick={onToggleSimulatedGame}>
-                    {simulatedGame ? 'Arrêter Simulation Jeu' : 'Tester : Simuler un Jeu Lancé'}
+                    {simulatedGame ? 'Arrêter simulation' : 'Simuler un jeu'}
                   </button>
                 </div>
 
@@ -768,22 +786,19 @@ export default function SettingsModal({
               <div className="hw-card">
                 <div className="field-label">
                   <span>Résolution &amp; Cadence FPS des Streams P2P</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
-                    {normalizeResolutionKey(streamSettings.resolution)} @ {streamSettings.fps} FPS •{' '}
+                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--emerald)' }}>
+                    {normalizeResolutionKey(streamSettings.resolution)} · {streamSettings.fps} FPS ·{' '}
                     {((streamSettings.maxBitrateKbps || 10500) / 1000).toFixed(1)} Mbps
                   </span>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 11.5, color: 'var(--text-muted)', minWidth: 74 }}>
-                      Résolution :
-                    </span>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div className="mv-seg">
                     {STREAM_RESOLUTIONS.map((res) => (
                       <button
                         key={res}
                         type="button"
-                        className={`preset-pill ${normalizeResolutionKey(streamSettings.resolution) === res ? 'selected' : ''}`}
+                        className={`mv-seg-btn ${normalizeResolutionKey(streamSettings.resolution) === res ? 'active' : ''}`}
                         onClick={() =>
                           onUpdateStreamSettings({
                             resolution: res,
@@ -803,15 +818,12 @@ export default function SettingsModal({
                     ))}
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 11.5, color: 'var(--text-muted)', minWidth: 74 }}>
-                      Fluidité :
-                    </span>
+                  <div className="mv-seg">
                     {STREAM_FPS_OPTIONS.map((fps) => (
                       <button
                         key={fps}
                         type="button"
-                        className={`preset-pill ${Number(streamSettings.fps) === fps ? 'selected' : ''}`}
+                        className={`mv-seg-btn ${Number(streamSettings.fps) === fps ? 'active' : ''}`}
                         onClick={() =>
                           onUpdateStreamSettings({
                             fps,
@@ -832,7 +844,7 @@ export default function SettingsModal({
                   </div>
                 </div>
 
-                <div style={{ marginTop: 6 }}>
+                <div style={{ marginTop: 4 }}>
                   <div className="field-label">
                     <span>Débit Vidéo Maximum (Bitrate P2P)</span>
                     <button
@@ -870,16 +882,16 @@ export default function SettingsModal({
 
                 <div
                   style={{
-                    marginTop: 4,
+                    marginTop: 2,
                     padding: '9px 12px',
-                    borderRadius: 8,
-                    background: 'rgba(72, 199, 142, 0.08)',
-                    border: '1px solid rgba(72, 199, 142, 0.35)',
+                    borderRadius: 'var(--radius-xs)',
+                    background: 'var(--emerald-bg)',
+                    border: '1px solid rgba(62, 207, 142, 0.24)',
                     fontSize: 11.5,
                     color: 'var(--text-secondary)',
                   }}
                 >
-                  ✓ <strong style={{ color: '#6ce0ad' }}>Anti-Freeze Minecraft &amp; Zéro Barre en Jeu actifs</strong> : la barre flottante « partage votre écran » est automatiquement masquée sous Windows et le mode Anti-Occlusion / Anti-EcoQoS empêche le gel d&apos;image sur Minecraft (sélectionnez « Écran entier » en Plein Écran F11 OpenGL).
+                  <strong style={{ color: 'var(--emerald)' }}>Anti-Freeze Minecraft &amp; Zéro Barre en Jeu actifs</strong> — la barre flottante « partage votre écran » est masquée sous Windows et le mode Anti-Occlusion empêche le gel d&apos;image en Plein Écran F11.
                 </div>
               </div>
             </>
@@ -889,8 +901,8 @@ export default function SettingsModal({
             <>
               <div className="hw-card">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <KeyRound size={16} color="#f5c26b" />
-                  <strong>Générer un nouveau Token de Connexion Obligatoire (Amis / Équipe)</strong>
+                  <KeyRound size={15} color="var(--gold-primary)" />
+                  <strong style={{ fontSize: 13.5 }}>Générer un Token de Connexion MASH-SV4 (Amis / Équipe)</strong>
                 </div>
                 <form
                   onSubmit={handleMintToken}
@@ -936,15 +948,15 @@ export default function SettingsModal({
 
               {secData.isAdmin !== false ? (
                 <div className="hw-card">
-                  <strong>Tokens émis &amp; Révocation en Temps Réel (Admin uniquement)</strong>
+                  <strong style={{ fontSize: 13.5 }}>Tokens émis &amp; Révocation en Temps Réel</strong>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {secData.tokens.map((t) => (
                       <div
                         key={t.jti}
                         style={{
                           padding: '10px 12px',
-                          borderRadius: 8,
-                          background: 'rgba(0,0,0,0.35)',
+                          borderRadius: 'var(--radius-xs)',
+                          background: 'var(--bg-void)',
                           border: '1px solid var(--border-subtle)',
                           display: 'flex',
                           alignItems: 'center',
@@ -953,8 +965,8 @@ export default function SettingsModal({
                         }}
                       >
                         <div>
-                          <div style={{ fontWeight: 600, fontSize: 13 }}>
-                            {t.label}{' '}
+                          <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>{t.label}</span>
                             {t.jti === secData.currentTokenJti && (
                               <span className="singularity-badge">SESSION ACTUELLE</span>
                             )}
@@ -966,7 +978,7 @@ export default function SettingsModal({
                               color: 'var(--text-muted)',
                             }}
                           >
-                            {t.tokenPreview} • Expire le{' '}
+                            {t.tokenPreview} · Expire le{' '}
                             {new Date(t.expiresAt).toLocaleDateString('fr-FR')}
                           </div>
                         </div>
@@ -1014,12 +1026,11 @@ export default function SettingsModal({
             <div className="hw-card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <div>
-                  <strong>
+                  <strong style={{ fontSize: 13.5 }}>
                     Dépôt Open-Source : {updaterStatus?.owner || 'MyMasha'}/{updaterStatus?.repo || 'MashVoice'}
                   </strong>
-                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                    Version installée : v{updaterStatus?.currentVersion || '1.0.6'} • Signature Ed25519 (
-                    {updaterStatus?.updaterKeyId || 'F6A9F0FBF91D7ADE'})
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+                    v{updaterStatus?.currentVersion || '1.0.6'} · Ed25519 ({updaterStatus?.updaterKeyId || 'F6A9F0FBF91D7ADE'})
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
@@ -1044,10 +1055,11 @@ export default function SettingsModal({
               <div
                 style={{
                   padding: '10px 12px',
-                  borderRadius: 8,
-                  background: 'rgba(232, 168, 73, 0.08)',
-                  border: '1px solid var(--gold-border)',
+                  borderRadius: 'var(--radius-xs)',
+                  background: 'var(--bg-void)',
+                  border: '1px solid var(--border-subtle)',
                   fontSize: 12.5,
+                  color: 'var(--text-secondary)',
                 }}
               >
                 {updaterStatus?.lastStatus?.message ||
@@ -1077,7 +1089,7 @@ export default function SettingsModal({
                   className="btn-gold-cta"
                   style={{ textDecoration: 'none' }}
                 >
-                  <ExternalLink size={15} /> Voir les Releases Officielles sur GitHub (MyMasha/MashVoice)
+                  <ExternalLink size={15} /> Voir les Releases sur GitHub (MyMasha/MashVoice)
                 </a>
               )}
             </div>
@@ -1103,7 +1115,7 @@ export default function SettingsModal({
               </div>
               <div className="field-group">
                 <label className="field-label">Présence</label>
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div className="mv-seg" style={{ maxWidth: 420 }}>
                   {[
                     { id: 'online', label: 'En ligne' },
                     { id: 'idle', label: 'Inactif' },
@@ -1112,7 +1124,7 @@ export default function SettingsModal({
                     <button
                       key={s.id}
                       type="button"
-                      className={`preset-pill ${presence === s.id ? 'selected' : ''}`}
+                      className={`mv-seg-btn ${presence === s.id ? 'active' : ''}`}
                       onClick={() => setPresence(s.id)}
                     >
                       {s.label}

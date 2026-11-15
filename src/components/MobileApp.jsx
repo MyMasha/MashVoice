@@ -493,11 +493,11 @@ export default function MobileApp({
 
                   {pendingPcChallenge && !inspectedChallenge && (
                     <div className="starter-token-box" style={{ marginTop: 6, textAlign: 'left' }}>
-                      <div style={{ fontSize: 11.5, color: 'var(--gold-bright)', fontWeight: 700 }}>
-                        📡 QR Code PC détecté à proximité :
+                      <div style={{ fontSize: 11.5, color: 'var(--gold-primary)', fontWeight: 600 }}>
+                        QR Code PC détecté à proximité :
                       </div>
                       <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
-                        {pendingPcChallenge.deviceName} • Empreinte {pendingPcChallenge.fingerprint}
+                        {pendingPcChallenge.deviceName} · Empreinte {pendingPcChallenge.fingerprint}
                       </div>
                       <button
                         type="button"
@@ -515,17 +515,17 @@ export default function MobileApp({
                 {inspectedChallenge && (
                   <div
                     className="hw-card"
-                    style={{ borderColor: 'var(--gold-primary)', background: 'rgba(232,168,73,0.1)' }}
+                    style={{ borderColor: 'var(--gold-border)', background: 'var(--bg-elevated)' }}
                   >
-                    <strong style={{ color: 'var(--gold-bright)' }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>
                       Confirmer la connexion sur ce PC ?
                     </strong>
-                    <div style={{ fontSize: 12 }}>
-                      Appareil : <strong>{inspectedChallenge.deviceName}</strong>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                      Appareil : <strong style={{ color: 'var(--text-primary)' }}>{inspectedChallenge.deviceName}</strong>
                       <br />
                       Empreinte : <code>{inspectedChallenge.fingerprint}</code>
                       <br />
-                      Compte transféré : <strong>@{mobSession.user.username}</strong>
+                      Compte transféré : <strong style={{ color: 'var(--text-primary)' }}>@{mobSession.user.username}</strong>
                     </div>
                     <button
                       type="button"
@@ -578,7 +578,8 @@ export default function MobileApp({
                         else joinMobileVoice(ch.id);
                       }}
                     >
-                      {ch.type === 'text' ? `#${ch.name}` : `🔊 ${ch.name}`}
+                      {ch.type === 'text' ? <Hash size={11} /> : <Volume2 size={11} />}
+                      <span>{ch.name}</span>
                     </button>
                   ))}
                 </div>
@@ -586,10 +587,10 @@ export default function MobileApp({
                 <div style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {messages.map((m) => (
                     <div key={m.id} style={{ fontSize: 12.5 }}>
-                      <strong style={{ color: 'var(--gold-bright)' }}>
+                      <strong style={{ color: 'var(--text-primary)' }}>
                         {stateData.users.find((u) => u.id === m.authorId)?.displayName || 'Pair'} :{' '}
                       </strong>
-                      <span>{m.content}</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>{m.content}</span>
                     </div>
                   ))}
                 </div>

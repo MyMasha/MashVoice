@@ -1,9 +1,10 @@
 /**
- * MashVoice Singularity Musical Sound & Call Ringtone Engine (Zero-Asset WebAudio)
- * - Polyphonic Discord-inspired looping Incoming Call music & Outgoing Call waiting music
- * - Crisp UI sounds for messages, friend requests, voice join/leave, peer join/leave,
- *   mute/deafen, screen share, MashKrisp toggle, and post-update Changelog fanfare
- * - Persistent user volume & per-category mute settings (`mashvoice.sfxConfig`)
+ * MashVoice Singularity UI Sound Design & Call Ringtone Engine (WebAudio + Pre-Decoded Stereo MP3s)
+ * - Uses curated Discord-style stereo UI Sound Design assets stored in `/public/sfx/*.mp3`
+ * - Sample-accurate seamless WebAudio looping for Incoming & Outgoing P2P call ringtones
+ * - Zero-latency RAM-cached `AudioBuffer` playback for voice, mute/deafen, MashKrisp™, 120 FPS stream,
+ *   encrypted DMs, and Zero-IP friend invites
+ * - Persistent user volume & per-category mute gates (`mashvoice.sfxConfig`)
  */
 
 const DEFAULT_SFX_CONFIG = {
@@ -14,12 +15,54 @@ const DEFAULT_SFX_CONFIG = {
   voiceSounds: true,
 };
 
+const SFX_MANIFEST = [
+  'incomingRing',
+  'outgoingRing',
+  'unlockGate',
+  'joinVoice',
+  'leaveVoice',
+  'peerJoinVoice',
+  'peerLeaveVoice',
+  'muteOn',
+  'muteOff',
+  'deafenOn',
+  'deafenOff',
+  'krispOn',
+  'krispOff',
+  'startStream',
+  'stopStream',
+  'messageIn',
+  'messageOut',
+  'friendRequest',
+];
+
+function resolveSfxUrl(id) {
+  const base =
+    typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL
+      ? import.meta.env.BASE_URL.replace(/\/$/, '')
+      : '';
+  return `${base}/sfx/${id}.mp3`;
+}
+
 class SoundEffects {
   constructor() {
     this.ctx = null;
-    this.incomingRingTimer = null;
-    this.outgoingRingTimer = null;
+    this.masterBus = null;
+    this.rawCache = new Map();
+    this.bufferCache = new Map();
+    this.inflightDecode = new Map();
+    this.activeRings = {
+      incoming: null,
+      outgoing: null,
+      preview: null,
+    };
     this.config = this.loadConfig();
+
+    if (typeof window !== 'undefined' && typeof fetch === 'function') {
+      // Pre-fetch compact SFX binaries (~168 KB total) in idle time for zero-latency first trigger
+      const schedule = window.requestIdleCallback || ((cb) => setTimeout(cb, 120));
+      schedule(() => this.prefetchBinaries());
+    }
   }
 
   loadConfig() {
@@ -35,16 +78,24 @@ class SoundEffects {
     return { ...this.config };
   }
 
+  effectiveMasterVolume() {
+    if (!this.config.enabled) return 0;
+    const v = Number(this.config.volume ?? DEFAULT_SFX_CONFIG.volume);
+    return Math.max(0, Math.min(1, Number.isFinite(v) ? v : DEFAULT_SFX_CONFIG.volume));
+  }
+
   updateConfig(patch) {
     this.config = { ...this.config, ...patch };
     try {
       localStorage.setItem('mashvoice.sfxConfig', JSON.stringify(this.config));
     } catch {
-      // ignore
+      // ignore storage quota errors
+    }
+    if (this.masterBus && this.ctx) {
+      this.masterBus.gain.setValueAtTime(this.effectiveMasterVolume(), this.ctx.currentTime);
     }
     if (!this.config.enabled || !this.config.callMusic) {
-      this.stopIncomingRing();
-      this.stopOutgoingRing();
+      this.stopAllRings();
     }
     return this.getConfig();
   }
@@ -53,122 +104,187 @@ class SoundEffects {
     if (typeof window === 'undefined') return null;
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (AudioCtx) this.ctx = new AudioCtx();
+      if (!AudioCtx) return null;
+      this.ctx = new AudioCtx();
+      this.masterBus = this.ctx.createGain();
+      this.masterBus.gain.value = this.effectiveMasterVolume();
+      this.masterBus.connect(this.ctx.destination);
     }
-    if (this.ctx && this.ctx.state === 'suspended') {
+    if (this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
     }
     return this.ctx;
   }
 
-  masterGain(baseGain) {
-    if (!this.config.enabled) return 0;
-    return Math.max(0, Math.min(0.45, baseGain * (this.config.volume ?? 0.75)));
+  async prefetchBinaries() {
+    await Promise.allSettled(
+      SFX_MANIFEST.map(async (id) => {
+        if (this.rawCache.has(id) || this.bufferCache.has(id)) return;
+        const res = await fetch(resolveSfxUrl(id));
+        if (res.ok) {
+          const ab = await res.arrayBuffer();
+          this.rawCache.set(id, ab);
+        }
+      })
+    );
   }
 
-  tone(freq, duration = 0.14, type = 'sine', gainVal = 0.08, delay = 0, detuneCents = 0) {
-    const g = this.masterGain(gainVal);
-    if (g <= 0.0001) return;
+  async getBuffer(id) {
+    if (this.bufferCache.has(id)) return this.bufferCache.get(id);
+    if (this.inflightDecode.has(id)) return this.inflightDecode.get(id);
+
     const ctx = this.ensureCtx();
-    if (!ctx) return;
+    if (!ctx) return null;
 
-    const now = ctx.currentTime + delay;
-    const osc = ctx.createOscillator();
-    const filter = ctx.createBiquadFilter();
-    const gain = ctx.createGain();
+    const promise = (async () => {
+      try {
+        let ab = this.rawCache.get(id);
+        if (!ab) {
+          const res = await fetch(resolveSfxUrl(id));
+          if (!res.ok) return null;
+          ab = await res.arrayBuffer();
+        } else {
+          this.rawCache.delete(id);
+        }
+        // Slice buffer copy in case decodeAudioData detaches the ArrayBuffer
+        const decoded = await ctx.decodeAudioData(ab.slice(0));
+        this.bufferCache.set(id, decoded);
+        return decoded;
+      } catch {
+        return null;
+      } finally {
+        this.inflightDecode.delete(id);
+      }
+    })();
 
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, now);
-    if (detuneCents) osc.detune.setValueAtTime(detuneCents, now);
-
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(Math.max(1600, freq * 4.2), now);
-
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(g, now + 0.014);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + duration + 0.025);
+    this.inflightDecode.set(id, promise);
+    return promise;
   }
 
-  // Warm polyphonic Rhodes/Pluck note for Discord-style call music
-  musicNote(freq, duration = 0.34, gainVal = 0.075, delay = 0) {
-    this.tone(freq, duration, 'triangle', gainVal, delay, 0);
-    this.tone(freq * 2, duration * 0.65, 'sine', gainVal * 0.32, delay, 4);
+  playSample(id, { gain = 1.0, loop = false, ringSlot = null } = {}) {
+    if (!this.config.enabled || this.effectiveMasterVolume() <= 0.0001) return;
+    const ctx = this.ensureCtx();
+    if (!ctx || !this.masterBus) return;
+
+    if (ringSlot) {
+      this.stopRingSlot(ringSlot);
+    }
+
+    const token = ringSlot ? Symbol(ringSlot) : null;
+    if (ringSlot) {
+      this.activeRings[ringSlot] = { token, src: null, gainNode: null };
+    }
+
+    const trigger = (buffer) => {
+      if (!buffer || !this.config.enabled) return;
+      if (ringSlot && this.activeRings[ringSlot]?.token !== token) return;
+      if (ringSlot && !this.config.callMusic) return;
+
+      const src = ctx.createBufferSource();
+      const gainNode = ctx.createGain();
+      src.buffer = buffer;
+      src.loop = Boolean(loop);
+      gainNode.gain.setValueAtTime(Math.max(0, gain), ctx.currentTime);
+
+      src.connect(gainNode);
+      gainNode.connect(this.masterBus);
+
+      if (ringSlot) {
+        this.activeRings[ringSlot] = { token, src, gainNode };
+      }
+
+      src.onended = () => {
+        if (ringSlot && this.activeRings[ringSlot]?.token === token) {
+          this.activeRings[ringSlot] = null;
+        }
+        try {
+          src.disconnect();
+          gainNode.disconnect();
+        } catch {
+          // ignore
+        }
+      };
+
+      src.start(0);
+    };
+
+    const cached = this.bufferCache.get(id);
+    if (cached) {
+      trigger(cached);
+    } else {
+      this.getBuffer(id).then(trigger);
+    }
+  }
+
+  stopRingSlot(slot) {
+    const entry = this.activeRings[slot];
+    if (!entry) return;
+    this.activeRings[slot] = null;
+
+    const { src, gainNode } = entry;
+    if (!src) return;
+
+    if (this.ctx && gainNode) {
+      try {
+        const now = this.ctx.currentTime;
+        gainNode.gain.cancelScheduledValues(now);
+        gainNode.gain.setValueAtTime(Math.max(0.0001, gainNode.gain.value), now);
+        gainNode.gain.linearRampToValueAtTime(0.0001, now + 0.03);
+        src.stop(now + 0.035);
+        return;
+      } catch {
+        // fall through to immediate stop
+      }
+    }
+    try {
+      src.stop();
+    } catch {
+      // ignore
+    }
   }
 
   /* =========================================================================
-     LOOPING CALL RINGTONES (INCOMING & OUTGOING — DISCORD INSPIRED)
+     LOOPING CALL RINGTONES (INCOMING & OUTGOING — SEAMLESS WEBAUDIO LOOPS)
      ========================================================================= */
 
   playIncomingRingPhrase() {
     if (!this.config.enabled || !this.config.callMusic) return;
-    // Iconic upbeat melodic arpeggio + warm bass pad (Fmaj7 -> G6 -> Am9)
-    // Bass foundation
-    this.tone(174.61, 0.85, 'sine', 0.065, 0.0); // F3
-    this.tone(196.0, 0.85, 'sine', 0.065, 0.9); // G3
-    // Sparkly lead melody
-    this.musicNote(523.25, 0.24, 0.085, 0.0); // C5
-    this.musicNote(659.25, 0.24, 0.085, 0.18); // E5
-    this.musicNote(783.99, 0.28, 0.09, 0.36); // G5
-    this.musicNote(1046.5, 0.42, 0.095, 0.56); // C6
-    // Second bar answer
-    this.musicNote(987.77, 0.22, 0.08, 1.02); // B5
-    this.musicNote(783.99, 0.22, 0.08, 1.2); // G5
-    this.musicNote(880.0, 0.52, 0.09, 1.4); // A5
+    this.playSample('incomingRing', { gain: 1.0, loop: false, ringSlot: 'preview' });
   }
 
   startIncomingRing() {
     this.stopOutgoingRing();
-    if (this.incomingRingTimer) return;
+    this.stopRingSlot('preview');
+    if (this.activeRings.incoming) return;
     if (!this.config.enabled || !this.config.callMusic) return;
-    this.playIncomingRingPhrase();
-    this.incomingRingTimer = setInterval(() => {
-      this.playIncomingRingPhrase();
-    }, 2500);
+    this.playSample('incomingRing', { gain: 1.0, loop: true, ringSlot: 'incoming' });
   }
 
   stopIncomingRing() {
-    if (this.incomingRingTimer) {
-      clearInterval(this.incomingRingTimer);
-      this.incomingRingTimer = null;
-    }
+    this.stopRingSlot('incoming');
   }
 
   playOutgoingRingPhrase() {
     if (!this.config.enabled || !this.config.callMusic) return;
-    // Smooth dreamy Discord-style outgoing waiting motif (Dmaj9 / Aadd9 pulse)
-    this.tone(220.0, 0.7, 'sine', 0.05, 0.0); // A3 soft sub
-    this.musicNote(440.0, 0.36, 0.068, 0.0); // A4
-    this.musicNote(554.37, 0.36, 0.068, 0.24); // C#5
-    this.musicNote(659.25, 0.58, 0.074, 0.48); // E5
-    this.musicNote(587.33, 0.48, 0.058, 1.18); // D5 gentle resolve
+    this.playSample('outgoingRing', { gain: 1.0, loop: false, ringSlot: 'preview' });
   }
 
   startOutgoingRing() {
     this.stopIncomingRing();
-    if (this.outgoingRingTimer) return;
+    this.stopRingSlot('preview');
+    if (this.activeRings.outgoing) return;
     if (!this.config.enabled || !this.config.callMusic) return;
-    this.playOutgoingRingPhrase();
-    this.outgoingRingTimer = setInterval(() => {
-      this.playOutgoingRingPhrase();
-    }, 2800);
+    this.playSample('outgoingRing', { gain: 1.0, loop: true, ringSlot: 'outgoing' });
   }
 
   stopOutgoingRing() {
-    if (this.outgoingRingTimer) {
-      clearInterval(this.outgoingRingTimer);
-      this.outgoingRingTimer = null;
-    }
+    this.stopRingSlot('outgoing');
   }
 
   stopAllRings() {
-    this.stopIncomingRing();
-    this.stopOutgoingRing();
+    this.stopRingSlot('incoming');
+    this.stopRingSlot('outgoing');
+    this.stopRingSlot('preview');
   }
 
   /* =========================================================================
@@ -176,96 +292,66 @@ class SoundEffects {
      ========================================================================= */
 
   unlockGate() {
-    this.musicNote(440, 0.14, 0.07, 0);
-    this.musicNote(554.37, 0.16, 0.07, 0.07);
-    this.musicNote(659.25, 0.24, 0.08, 0.14);
+    this.playSample('unlockGate', { gain: 1.0 });
   }
 
   joinVoice() {
     this.stopAllRings();
     if (!this.config.voiceSounds) return;
-    this.musicNote(523.25, 0.12, 0.08, 0);
-    this.musicNote(783.99, 0.18, 0.085, 0.075);
+    this.playSample('joinVoice', { gain: 1.0 });
   }
 
   leaveVoice() {
     this.stopAllRings();
     if (!this.config.voiceSounds) return;
-    this.musicNote(659.25, 0.11, 0.075, 0);
-    this.musicNote(392.0, 0.18, 0.08, 0.075);
+    this.playSample('leaveVoice', { gain: 1.0 });
   }
 
   peerJoinVoice() {
     if (!this.config.voiceSounds) return;
-    this.musicNote(587.33, 0.1, 0.065, 0);
-    this.musicNote(880.0, 0.15, 0.07, 0.065);
+    this.playSample('peerJoinVoice', { gain: 1.0 });
   }
 
   peerLeaveVoice() {
     if (!this.config.voiceSounds) return;
-    this.musicNote(587.33, 0.1, 0.06, 0);
-    this.musicNote(440.0, 0.15, 0.065, 0.065);
+    this.playSample('peerLeaveVoice', { gain: 1.0 });
   }
 
   toggleMute(muted) {
     if (!this.config.voiceSounds) return;
-    if (muted) {
-      this.tone(420, 0.08, 'triangle', 0.065, 0);
-      this.tone(300, 0.09, 'triangle', 0.065, 0.055);
-    } else {
-      this.tone(330, 0.08, 'triangle', 0.065, 0);
-      this.tone(495, 0.09, 'triangle', 0.065, 0.055);
-    }
+    this.playSample(muted ? 'muteOn' : 'muteOff', { gain: 1.0 });
   }
 
   toggleDeafen(deafened) {
     if (!this.config.voiceSounds) return;
-    if (deafened) {
-      this.tone(392, 0.08, 'sine', 0.07, 0);
-      this.tone(311.13, 0.08, 'sine', 0.07, 0.055);
-      this.tone(233.08, 0.13, 'sine', 0.075, 0.11);
-    } else {
-      this.tone(261.63, 0.08, 'sine', 0.07, 0);
-      this.tone(349.23, 0.08, 'sine', 0.07, 0.055);
-      this.tone(523.25, 0.13, 0.075, 0.11);
-    }
+    this.playSample(deafened ? 'deafenOn' : 'deafenOff', { gain: 1.0 });
   }
 
   krispToggle(enabled) {
     if (!this.config.voiceSounds) return;
-    if (enabled) {
-      this.musicNote(659.25, 0.09, 0.065, 0);
-      this.musicNote(987.77, 0.14, 0.07, 0.06);
-    } else {
-      this.tone(480, 0.1, 'sine', 0.055, 0);
-    }
+    this.playSample(enabled ? 'krispOn' : 'krispOff', { gain: 1.0 });
   }
 
   startStream() {
     if (!this.config.voiceSounds) return;
-    this.musicNote(587.33, 0.1, 0.07, 0);
-    this.musicNote(783.99, 0.12, 0.075, 0.065);
-    this.musicNote(1174.66, 0.22, 0.085, 0.13);
+    this.playSample('startStream', { gain: 1.0 });
   }
 
   stopStream() {
     if (!this.config.voiceSounds) return;
-    this.musicNote(880.0, 0.09, 0.065, 0);
-    this.musicNote(523.25, 0.16, 0.07, 0.065);
+    this.playSample('stopStream', { gain: 1.0 });
   }
 
-  // Incoming chat message pop (Discord double-droplet)
+  // Incoming chat message pop (Velvet Bubble double pop)
   messageIn() {
     if (!this.config.messageSounds) return;
-    this.tone(740, 0.065, 'sine', 0.065, 0);
-    this.tone(1046.5, 0.095, 'sine', 0.075, 0.05);
+    this.playSample('messageIn', { gain: 1.0 });
   }
 
-  // Outgoing chat message subtle soft tick
+  // Outgoing chat message discreet tactile micro-bubble
   messageOut() {
     if (!this.config.messageSounds) return;
-    this.tone(560, 0.045, 'sine', 0.038, 0);
-    this.tone(720, 0.05, 'sine', 0.035, 0.028);
+    this.playSample('messageOut', { gain: 1.0 });
   }
 
   // Backwards-compatible alias
@@ -275,23 +361,15 @@ class SoundEffects {
 
   friendRequest() {
     if (!this.config.messageSounds) return;
-    this.musicNote(587.33, 0.12, 0.08, 0);
-    this.musicNote(739.99, 0.12, 0.08, 0.09);
-    this.musicNote(880.0, 0.14, 0.085, 0.18);
-    this.musicNote(1174.66, 0.28, 0.09, 0.27);
+    this.playSample('friendRequest', { gain: 1.0 });
   }
 
   updateAvailable() {
-    this.musicNote(659.25, 0.13, 0.07, 0);
-    this.musicNote(880.0, 0.16, 0.075, 0.09);
-    this.musicNote(1318.5, 0.26, 0.08, 0.19);
+    this.playSample('friendRequest', { gain: 0.85 });
   }
 
   changelogFanfare() {
-    this.musicNote(523.25, 0.14, 0.075, 0);
-    this.musicNote(659.25, 0.14, 0.075, 0.08);
-    this.musicNote(783.99, 0.16, 0.08, 0.16);
-    this.musicNote(1046.5, 0.36, 0.09, 0.25);
+    this.playSample('unlockGate', { gain: 1.0 });
   }
 }
 

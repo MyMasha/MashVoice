@@ -219,7 +219,7 @@ export default function ServerRoleModal({
             <div className="hw-card">
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
                 <span>Code d&apos;invitation P2P du serveur :</span>
-                <code style={{ color: 'var(--gold-bright)', fontWeight: 700 }}>
+                <code style={{ color: 'var(--gold-primary)', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
                   {server.inviteCode}
                 </code>
               </div>
@@ -227,7 +227,7 @@ export default function ServerRoleModal({
 
             <form onSubmit={handleCreateRole} className="hw-card">
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Shield size={15} color="#f5c26b" />
+                <Shield size={15} color="var(--gold-primary)" />
                 <strong>Créer un Rôle Personnalisé</strong>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 56px auto', gap: 8 }}>
@@ -271,7 +271,7 @@ export default function ServerRoleModal({
 
             <div className="hw-card">
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Users size={15} color="#f5c26b" />
+                <Users size={15} color="var(--gold-primary)" />
                 <strong>Attribution des Rôles aux Membres ({server.members.length})</strong>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -283,8 +283,9 @@ export default function ServerRoleModal({
                       key={m.userId}
                       style={{
                         padding: 10,
-                        borderRadius: 8,
-                        background: 'rgba(0,0,0,0.3)',
+                        borderRadius: 'var(--radius-xs)',
+                        background: 'var(--bg-void)',
+                        border: '1px solid var(--border-subtle)',
                         display: 'flex',
                         flexDirection: 'column',
                         gap: 6,

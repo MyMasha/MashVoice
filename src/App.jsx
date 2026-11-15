@@ -198,10 +198,10 @@ export default function App() {
     }
     setActiveChangelog({
       version: updaterStatus?.currentVersion || '1.0.6',
-      title: `Nouveautés MashVoice Singularity v${updaterStatus?.currentVersion || '1.0.6'}`,
+      title: `Nouveautés MashVoice v${updaterStatus?.currentVersion || '1.0.6'}`,
       notes:
         updaterStatus?.lastStatus?.releaseNotes ||
-        'MashVoice Singularity est à jour.',
+        'MashVoice est à jour.',
       publishedAt: new Date().toISOString(),
     });
   };
@@ -261,7 +261,7 @@ export default function App() {
   }
 
   if (checkingBootAuth) {
-    return <div style={{ width: '100%', height: '100%', background: '#030305' }} />;
+    return <div style={{ width: '100%', height: '100%', background: 'var(--bg-void)' }} />;
   }
 
   return (

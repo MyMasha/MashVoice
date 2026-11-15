@@ -22,23 +22,23 @@ import {
 export const SERVER_BANNER_PRESETS = [
   {
     id: 'singularity-gold',
-    label: 'Or Singularity',
-    css: 'linear-gradient(135deg, #1b1307 0%, #5c3a10 52%, #e8a849 100%)',
+    label: 'Obsidian Ambre',
+    css: 'linear-gradient(135deg, #101218 0%, #191612 65%, rgba(229, 169, 82, 0.22) 100%)',
   },
   {
     id: 'void-violet',
-    label: 'Nébuleuse Violette',
-    css: 'linear-gradient(135deg, #0b0718 0%, #2b1854 55%, #7d56f4 100%)',
+    label: 'Obsidian Air',
+    css: 'linear-gradient(135deg, #0d1016 0%, #141923 60%, #1f2736 100%)',
   },
   {
     id: 'cyber-emerald',
-    label: 'Émeraude Quantique',
-    css: 'linear-gradient(135deg, #061712 0%, #114b3a 55%, #48c78e 100%)',
+    label: 'Émeraude Nordique',
+    css: 'linear-gradient(135deg, #0d1314 0%, #11211d 65%, rgba(62, 207, 142, 0.2) 100%)',
   },
   {
     id: 'crimson-nova',
-    label: 'Supernova Pourpre',
-    css: 'linear-gradient(135deg, #1b070a 0%, #5c1622 55%, #e25555 100%)',
+    label: 'Bordeaux Solaire',
+    css: 'linear-gradient(135deg, #130f12 0%, #241418 65%, rgba(239, 90, 90, 0.22) 100%)',
   },
 ];
 

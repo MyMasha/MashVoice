@@ -48,120 +48,117 @@ export default function StreamLaunchModal({
           padding: 22,
           display: 'flex',
           flexDirection: 'column',
-          gap: 15,
+          gap: 14,
         }}
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleConfirm}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div
               style={{
                 width: 34,
                 height: 34,
-                borderRadius: 10,
-                background: 'rgba(232, 168, 73, 0.16)',
+                borderRadius: 9,
+                background: 'var(--gold-muted)',
                 border: '1px solid var(--gold-border)',
                 display: 'grid',
                 placeItems: 'center',
-                color: 'var(--gold-bright)',
+                color: 'var(--gold-primary)',
+                flexShrink: 0,
               }}
             >
-              <MonitorUp size={18} />
+              <MonitorUp size={17} />
             </div>
             <div>
-              <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 17, margin: 0 }}>
-                Configurer ton Stream P2P
+              <h3 style={{ fontSize: 16, fontWeight: 600, letterSpacing: '-0.015em', margin: 0 }}>
+                Partager un jeu ou écran
               </h3>
               <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
-                Zero-Copy GPU • Audio du jeu inclus • Sans barre flottante en jeu
+                Capture GPU Zero-Copy · Audio inclus · Sans bordure en jeu
               </div>
             </div>
           </div>
 
-          <button type="button" className="win-btn" onClick={onClose} aria-label="Fermer">
-            <X size={17} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 11,
+                padding: '4px 9px',
+                borderRadius: 6,
+                background: 'var(--gold-muted)',
+                color: 'var(--gold-primary)',
+                fontWeight: 500,
+              }}
+            >
+              {resolution} · {fps} FPS · ~{(recommendedKbps / 1000).toFixed(1)} Mbps
+            </span>
+            <button type="button" className="win-btn" onClick={onClose} aria-label="Fermer">
+              <X size={16} />
+            </button>
+          </div>
         </div>
 
         {/* 1. Resolution Picker: 720p, 1080p, 2K, 4K */}
-        <div className="hw-card" style={{ padding: 14, gap: 10 }}>
-          <div className="field-label" style={{ marginBottom: 0 }}>
-            <span>Qualité / Résolution d&apos;image</span>
-            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
-              {resMeta.sub}
+        <div className="hw-card" style={{ padding: 14, gap: 9 }}>
+          <div className="field-label">
+            <span>Résolution</span>
+            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontSize: 11 }}>
+              {resMeta.sub} ({resMeta.w}×{resMeta.h})
             </span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-            {STREAM_RESOLUTIONS.map((res) => {
-              const info = STREAM_RESOLUTION_MAP[res];
-              const selected = resolution === res;
-              return (
-                <button
-                  key={res}
-                  type="button"
-                  className={`hw-choice ${selected ? 'selected' : ''}`}
-                  style={{ padding: '10px 8px', textAlign: 'center', alignItems: 'center' }}
-                  onClick={() => setResolution(res)}
-                >
-                  <strong style={{ fontSize: 14.5 }}>{res}</strong>
-                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                    {info.w}×{info.h}
-                  </span>
-                </button>
-              );
-            })}
+          <div className="mv-seg" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+            {STREAM_RESOLUTIONS.map((res) => (
+              <button
+                key={res}
+                type="button"
+                className={`mv-seg-btn ${resolution === res ? 'active' : ''}`}
+                style={{ fontFamily: 'var(--font-mono)', padding: '8px 6px' }}
+                onClick={() => setResolution(res)}
+              >
+                {res}
+              </button>
+            ))}
           </div>
         </div>
 
         {/* 2. Frame Rate Picker: 15, 30, 60, 120 FPS */}
-        <div className="hw-card" style={{ padding: 14, gap: 10 }}>
-          <div className="field-label" style={{ marginBottom: 0 }}>
-            <span>Fluidité (Images par seconde)</span>
-            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
-              {fps} FPS • ~{(recommendedKbps / 1000).toFixed(1)} Mbps
+        <div className="hw-card" style={{ padding: 14, gap: 9 }}>
+          <div className="field-label">
+            <span>Fluidité</span>
+            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontSize: 11 }}>
+              Cible {fps} images/s
             </span>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-            {STREAM_FPS_OPTIONS.map((val) => {
-              const selected = fps === val;
-              const desc =
-                val === 15
-                  ? 'Éco'
-                  : val === 30
-                    ? 'Standard'
-                    : val === 60
-                      ? 'Gaming'
-                      : 'Esport';
-              return (
-                <button
-                  key={val}
-                  type="button"
-                  className={`hw-choice ${selected ? 'selected' : ''}`}
-                  style={{ padding: '10px 8px', textAlign: 'center', alignItems: 'center' }}
-                  onClick={() => setFps(val)}
-                >
-                  <strong style={{ fontSize: 14 }}>{val} FPS</strong>
-                  <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{desc}</span>
-                </button>
-              );
-            })}
+          <div className="mv-seg" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+            {STREAM_FPS_OPTIONS.map((val) => (
+              <button
+                key={val}
+                type="button"
+                className={`mv-seg-btn ${fps === val ? 'active' : ''}`}
+                style={{ fontFamily: 'var(--font-mono)', padding: '8px 6px' }}
+                onClick={() => setFps(val)}
+              >
+                {val} FPS
+              </button>
+            ))}
           </div>
         </div>
 
         {/* 3. Hardware Codec & Frame Pacing */}
-        <div className="hw-card" style={{ padding: 12, gap: 8 }}>
+        <div className="hw-card" style={{ padding: 12, gap: 9 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600 }}>
-              <Cpu size={14} color="#f5c26b" /> Encodeur Matériel
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 500 }}>
+              <Cpu size={14} color="var(--text-secondary)" /> Encodeur matériel
             </span>
-            <div style={{ display: 'flex', gap: 6 }}>
+            <div className="mv-seg" style={{ gridTemplateColumns: 'repeat(3, auto)' }}>
               {['H264', 'AV1', 'VP9'].map((codec) => (
                 <button
                   key={codec}
                   type="button"
-                  className={`preset-pill ${preferredCodec === codec ? 'selected' : ''}`}
-                  style={{ padding: '4px 10px', fontSize: 11.5 }}
+                  className={`mv-seg-btn ${preferredCodec === codec ? 'active' : ''}`}
+                  style={{ padding: '4px 10px', fontSize: 11.5, fontFamily: 'var(--font-mono)' }}
                   onClick={() => setPreferredCodec(codec)}
                 >
                   {codec === 'H264' ? 'H.264 NVENC' : codec}
@@ -170,7 +167,16 @@ export default function StreamLaunchModal({
             </div>
           </div>
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer' }}>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 12,
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+            }}
+          >
             <input
               type="checkbox"
               checked={maintainFramerate}
@@ -185,38 +191,37 @@ export default function StreamLaunchModal({
         <div
           style={{
             padding: '10px 12px',
-            borderRadius: 10,
-            background: 'rgba(72, 199, 142, 0.09)',
-            border: '1px solid rgba(72, 199, 142, 0.35)',
+            borderRadius: 9,
+            background: 'rgba(62, 207, 142, 0.07)',
+            border: '1px solid rgba(62, 207, 142, 0.22)',
             display: 'flex',
             flexDirection: 'column',
-            gap: 6,
+            gap: 5,
             fontSize: 11.5,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#6ce0ad', fontWeight: 600 }}>
-            <EyeOff size={14} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--emerald)', fontWeight: 600 }}>
+            <EyeOff size={13} />
             <span>Barre « partage votre écran » masquée automatiquement en jeu</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 7, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-            <Gamepad2 size={14} color="#f5c26b" style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 7, color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+            <Gamepad2 size={13} color="var(--text-muted)" style={{ flexShrink: 0, marginTop: 2 }} />
             <span>
               <strong>
-                {activeGameTitle ? `${activeGameTitle} détecté : ` : 'Astuce Minecraft / OpenGL : '}
+                {activeGameTitle ? `${activeGameTitle} détecté : ` : 'Astuce Plein Écran (F11) : '}
               </strong>
-              si tu joues en <strong>Plein Écran (F11)</strong>, sélectionne l&apos;onglet{' '}
-              <strong style={{ color: 'var(--gold-bright)' }}>« Écran entier »</strong> dans la
-              fenêtre suivante pour éviter tout blocage de fenêtre OpenGL.
+              sélectionne l&apos;onglet <strong style={{ color: 'var(--text-primary)' }}>« Écran entier »</strong>{' '}
+              dans la fenêtre système suivante pour éviter tout gel OpenGL.
             </span>
           </div>
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button type="button" className="btn-chip" onClick={onClose}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 2 }}>
+          <button type="button" className="btn-chip" style={{ padding: '9px 14px' }} onClick={onClose}>
             Annuler
           </button>
-          <button type="submit" className="btn-gold-cta" style={{ padding: '10px 20px' }}>
-            <Zap size={15} /> Passer en Direct ({resolution} • {fps} FPS)
+          <button type="submit" className="btn-gold-cta" style={{ padding: '9px 20px' }}>
+            <Zap size={14} /> Lancer le Stream P2P ({resolution} · {fps} FPS)
           </button>
         </div>
       </form>

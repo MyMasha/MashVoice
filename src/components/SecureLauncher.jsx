@@ -200,12 +200,12 @@ export default function SecureLauncher({
       />
       <div className="launcher-vignette" />
 
-      {/* Top Navigation Bar (MASHCLIENT Singularity 4.4 style) */}
+      {/* Top Navigation Bar (v5 « Obsidian Air ») */}
       <header className="launcher-topbar">
         <div className="brand-cluster">
           <div className="brand-mark" />
           <span className="brand-title">MASHVOICE</span>
-          <span className="singularity-badge">SINGULARITY 4.4</span>
+          <span className="singularity-badge">5.0</span>
         </div>
 
         <nav className="launcher-pill-nav" aria-label="Navigation Launcher">
@@ -223,7 +223,7 @@ export default function SecureLauncher({
             className={`pill-nav-btn ${navTab === 'optimisations' ? 'active' : ''}`}
             onClick={() => setNavTab('optimisations')}
           >
-            Optimisations <span className="pill-count">22/22</span>
+            Performance
           </button>
           <button
             type="button"
@@ -231,7 +231,7 @@ export default function SecureLauncher({
             className={`pill-nav-btn ${navTab === 'updater' ? 'active' : ''}`}
             onClick={() => setNavTab('updater')}
           >
-            Auto-Updater{' '}
+            Mises à jour{' '}
             <span className="pill-count">
               v{updaterStatus?.currentVersion || bootstrap?.version || '1.0.6'}
             </span>
@@ -247,6 +247,28 @@ export default function SecureLauncher({
         </nav>
 
         <div className="topbar-right">
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontFamily: 'var(--font-mono)',
+              fontSize: 11,
+              color: 'var(--emerald)',
+              marginRight: 4,
+            }}
+          >
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: 'var(--emerald)',
+              }}
+            />
+            zyntra.win · E2EE
+          </span>
+
           <UpdateTopPill
             updaterStatus={updaterStatus}
             installing={installingUpdate}
@@ -262,7 +284,7 @@ export default function SecureLauncher({
             title="Ouvrir l'application mobile MashVoice pour tester le vocal mobile ou scanner le QR Code PC"
           >
             <Smartphone size={14} />
-            {mobileCompanionOpen ? 'Fermer App Mobile' : 'App Mobile & Scan QR'}
+            {mobileCompanionOpen ? 'Fermer Mobile' : 'Mobile & QR'}
           </button>
 
           {window.mashNative?.isElectron && (
@@ -297,20 +319,36 @@ export default function SecureLauncher({
       <main className="launcher-main">
         <section className="launcher-hero-left">
           <div className="hero-overline">
-            ZERO-IP ZYNTRA • MASHKRISP™ IA • STREAM 120 FPS
+            <span>Routage aveugle Zero-IP · Audio Opus 48 kHz stéréo</span>
           </div>
-          <h1 className="hero-heading">MASHVOICE</h1>
+          <h1 className="hero-heading">Communication P2P sans compromis.</h1>
           <p className="hero-description">
-            Communication vocale P2P chiffrée de bout en bout avec isolation vocale{' '}
-            <strong>MashKrisp™ Anti-Clavier</strong>, ajout d&apos;amis <strong>100% par Pseudo</strong>,
-            authentification <strong>Token &amp; QR Mobile</strong> et Trou Noir 3D de Schwarzschild.
+            Vocal basse latence chiffré de bout en bout avec isolation{' '}
+            <strong>MashKrisp™ Anti-Clavier</strong>, ajout d&apos;amis{' '}
+            <strong>100% par pseudo</strong> et partage d&apos;écran jusqu&apos;en{' '}
+            <strong>4K 120 FPS</strong> sans impact en jeu.
           </p>
 
-          <div className="preset-row">
+          <div className="launcher-metrics-row">
+            <div className="launcher-metric-card">
+              <strong>&lt; 2.8 ms</strong>
+              <span>MashKrisp™ AudioWorklet</span>
+            </div>
+            <div className="launcher-metric-card">
+              <strong>4K · 120 FPS</strong>
+              <span>Stream GPU Zero-Copy</span>
+            </div>
+            <div className="launcher-metric-card">
+              <strong>AES-256-GCM</strong>
+              <span>Aucune IP exposée</span>
+            </div>
+          </div>
+
+          <div className="preset-row" role="group" aria-label="Profil graphique d'arrière-plan">
             {[
               { id: 'ultra', label: 'Cinématique' },
-              { id: 'balanced', label: 'Équilibré (Recommandé)' },
-              { id: 'turbo', label: 'Turbo FPS (0% GPU)' },
+              { id: 'balanced', label: 'Équilibré' },
+              { id: 'turbo', label: 'Turbo 0% GPU' },
             ].map((p) => (
               <button
                 key={p.id}
@@ -325,17 +363,22 @@ export default function SecureLauncher({
           </div>
         </section>
 
-        {/* Right Panel switches based on Top Pill Nav */}
+        {/* Right Panel switches based on Top Segmented Nav */}
         {navTab === 'connexion' && (
           <section className="gatekeeper-card" aria-label="Portail de Sécurité">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <ShieldCheck size={18} color="#f5c26b" />
-                <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15 }}>
-                  Portail Sécurisé Singularity
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <ShieldCheck size={17} color="var(--gold-primary)" />
+                  <span style={{ fontWeight: 600, fontSize: 16, letterSpacing: '-0.015em' }}>
+                    Bon retour
+                  </span>
+                </div>
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  Session P2P sans adresse IP exposée. Clés chiffrées localement.
                 </span>
               </div>
-              <span className="singularity-badge">OBLIGATOIRE</span>
+              <span className="singularity-badge">MASH-SV4</span>
             </div>
 
             <div className="gate-tabs">
@@ -345,7 +388,7 @@ export default function SecureLauncher({
                 className={`gate-tab ${authMode === 'token' ? 'active' : ''}`}
                 onClick={() => setAuthMode('token')}
               >
-                <KeyRound size={14} /> Token de Connexion
+                <KeyRound size={13} /> Clé d&apos;accès
               </button>
               <button
                 type="button"
@@ -353,7 +396,7 @@ export default function SecureLauncher({
                 className={`gate-tab ${authMode === 'qr' ? 'active' : ''}`}
                 onClick={() => setAuthMode('qr')}
               >
-                <QrCode size={14} /> Scanner QR Mobile
+                <QrCode size={13} /> Scan QR Mobile
               </button>
             </div>
 
@@ -363,8 +406,8 @@ export default function SecureLauncher({
                   padding: '9px 12px',
                   borderRadius: 8,
                   background: 'var(--crimson-bg)',
-                  border: '1px solid rgba(226, 85, 85, 0.4)',
-                  color: '#ff9494',
+                  border: '1px solid rgba(239, 90, 90, 0.32)',
+                  color: 'var(--crimson)',
                   fontSize: 12,
                   display: 'flex',
                   alignItems: 'center',
@@ -377,26 +420,39 @@ export default function SecureLauncher({
             )}
 
             {authMode === 'token' ? (
-              <form onSubmit={handleTokenLogin} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+              <form onSubmit={handleTokenLogin} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div className="field-group">
                   <label className="field-label" htmlFor="launcher-username">
-                    <span>Ton Pseudo</span>
-                    <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>Zero-IP E2EE</span>
+                    <span>Pseudo</span>
+                    <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                      Zero-IP
+                    </span>
                   </label>
                   <input
                     id="launcher-username"
                     className="mash-input"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Choisis ton pseudo (ex: rawsq, v0dka...)"
+                    placeholder="ex: rawsq, v0dka..."
                     autoComplete="off"
                   />
                 </div>
 
                 <div className="field-group">
                   <label className="field-label" htmlFor="launcher-conn-token">
-                    <span>Token de Connexion (Requis en continu)</span>
-                    <Lock size={12} color="#e8a849" />
+                    <span>Token MASH-SV4</span>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        color: 'var(--emerald)',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: 11,
+                      }}
+                    >
+                      <Lock size={11} /> Coffre AES-256
+                    </span>
                   </label>
                   <input
                     id="launcher-conn-token"
@@ -411,14 +467,14 @@ export default function SecureLauncher({
 
                 {starterTokens.some((t) => t.token) && (
                   <div className="starter-token-box">
-                    <div style={{ fontSize: 11, color: 'var(--gold-bright)', fontWeight: 600 }}>
-                      Accès propriétaire local (clique pour remplir ton Token) :
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 500 }}>
+                      Clé propriétaire locale détectée :
                     </div>
                     {starterTokens.slice(0, 1).map(
                       (t) =>
                         t.token && (
                           <div key={t.jti} className="starter-token-row">
-                            <span style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                            <span style={{ fontSize: 11.5, color: 'var(--text-primary)', fontWeight: 500 }}>
                               {t.label}
                             </span>
                             <button
@@ -429,7 +485,7 @@ export default function SecureLauncher({
                                 setErrorMsg('');
                               }}
                             >
-                              {connectionToken === t.token ? '✓ Token actif' : 'Utiliser mon Token'}
+                              {connectionToken === t.token ? '✓ Clé active' : 'Remplir'}
                             </button>
                           </div>
                         )
@@ -453,8 +509,17 @@ export default function SecureLauncher({
                     onChange={(e) => setRememberVault(e.target.checked)}
                     style={{ accentColor: 'var(--gold-primary)' }}
                   />
-                  Sauvegarder dans le coffre-fort local chiffré (rester connecté)
+                  Mémoriser dans le coffre-fort local chiffré
                 </label>
+
+                <button
+                  type="submit"
+                  className="btn-gold-cta"
+                  disabled={submitting}
+                  style={{ width: '100%', padding: '10px 16px', marginTop: 2 }}
+                >
+                  <span>{submitting ? 'Vérification...' : 'Ouvrir MashVoice'}</span>
+                </button>
               </form>
             ) : (
               <div className="qr-auth-panel">
@@ -462,14 +527,23 @@ export default function SecureLauncher({
                   {qrState?.qrDataUrl ? (
                     <img src={qrState.qrDataUrl} alt="QR Code de connexion MashVoice PC" />
                   ) : (
-                    <div style={{ width: 176, height: 176, display: 'grid', placeItems: 'center' }}>
+                    <div
+                      style={{
+                        width: 168,
+                        height: 168,
+                        display: 'grid',
+                        placeItems: 'center',
+                        color: 'var(--text-muted)',
+                        fontSize: 12,
+                      }}
+                    >
                       Génération...
                     </div>
                   )}
 
                   {qrScannedBy && (
                     <div className="qr-scanned-overlay">
-                      <Smartphone size={26} color="#f5c26b" />
+                      <Smartphone size={24} color="var(--emerald)" />
                       <div>Mobile détecté : @{qrScannedBy.username}</div>
                       <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 400 }}>
                         Appuyez sur « Autoriser ce PC » sur votre téléphone...
@@ -479,24 +553,24 @@ export default function SecureLauncher({
                 </div>
 
                 <div style={{ fontSize: 12.5, color: 'var(--text-primary)', fontWeight: 600 }}>
-                  Scannez avec l&apos;app MashVoice Mobile déjà connectée
+                  Scannez depuis l&apos;app compagnon MashVoice
                 </div>
-                <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
-                  Ouvrez <strong>MashVoice Mobile → Scanner QR</strong> pour transférer votre session
-                  sécurisée sur ce PC en 1 seconde.
+                <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+                  Ouvrez <strong>MashVoice Mobile → Scan QR</strong> pour transférer votre session
+                  chiffrée instantanément.
                 </div>
                 <div
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 10,
+                    gap: 8,
                     fontFamily: 'var(--font-mono)',
                     fontSize: 11,
-                    color: 'var(--gold-primary)',
+                    color: 'var(--text-muted)',
                   }}
                 >
-                  <span>Empreinte: {qrState?.fingerprint || '----'}</span>
-                  <span>•</span>
+                  <span>{qrState?.fingerprint || '----'}</span>
+                  <span>·</span>
                   <span>Expire dans {qrSecondsLeft}s</span>
                   <button type="button" className="btn-chip" onClick={createQrChallenge}>
                     Régénérer
@@ -510,8 +584,8 @@ export default function SecureLauncher({
         {navTab === 'optimisations' && (
           <section className="launcher-panel-overlay">
             <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-              <Cpu size={18} color="#f5c26b" />
-              <h2 style={{ fontSize: 16, fontFamily: 'var(--font-display)' }}>
+              <Cpu size={17} color="var(--gold-primary)" />
+              <h2 style={{ fontSize: 15.5, fontWeight: 600 }}>
                 Allocation Matérielle GPU / CPU / RAM &amp; Mode Jeu
               </h2>
             </div>
@@ -519,7 +593,9 @@ export default function SecureLauncher({
             <div className="hw-card">
               <div className="field-label">
                 <span>Processeur de Rendu &amp; Encodage Stream</span>
-                <span style={{ color: 'var(--gold-bright)' }}>{hwConfig.renderBackend}</span>
+                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-primary)' }}>
+                  {hwConfig.renderBackend}
+                </span>
               </div>
               <div className="hw-options-grid">
                 {[
@@ -555,7 +631,7 @@ export default function SecureLauncher({
             <div className="hw-card">
               <div className="field-label">
                 <span>Limite Mémoire RAM Allouée à MashVoice</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-primary)' }}>
                   {hwConfig.maxRamMb} Mo
                 </span>
               </div>
@@ -577,7 +653,7 @@ export default function SecureLauncher({
                   fontFamily: 'var(--font-mono)',
                 }}
               >
-                <span>512 Mo (Ultra-Léger)</span>
+                <span>512 Mo (Léger)</span>
                 <span>2048 Mo (Recommandé)</span>
                 <span>8192 Mo (Stream 4K)</span>
               </div>
@@ -586,7 +662,7 @@ export default function SecureLauncher({
             <div className="hw-card">
               <div className="field-label">
                 <span>Coeurs / Threads CPU Autorisés</span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-bright)' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--gold-primary)' }}>
                   {hwConfig.cpuThreads} Threads
                 </span>
               </div>
@@ -605,16 +681,16 @@ export default function SecureLauncher({
 
         {navTab === 'updater' && (
           <section className="launcher-panel-overlay">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                <RefreshCw size={18} color="#f5c26b" />
-                <h2 style={{ fontSize: 16, fontFamily: 'var(--font-display)' }}>
+                <RefreshCw size={17} color="var(--gold-primary)" />
+                <h2 style={{ fontSize: 15.5, fontWeight: 600 }}>
                   Auto-Updater 1-Clic — MyMasha/MashVoice
                 </h2>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button type="button" className="btn-chip" onClick={onOpenChangelog}>
-                  <Sparkles size={12} /> Changelog
+                  <Sparkles size={12} /> Notes
                 </button>
                 <button
                   type="button"
@@ -626,23 +702,23 @@ export default function SecureLauncher({
                     setCheckingUpdate(false);
                   }}
                 >
-                  {checkingUpdate ? 'Vérification...' : 'Vérifier maintenant'}
+                  {checkingUpdate ? 'Vérification...' : 'Vérifier'}
                 </button>
               </div>
             </div>
 
             <div className="hw-card">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                <CheckCircle2 size={16} color="#48c78e" />
+                <CheckCircle2 size={16} color="var(--emerald)" />
                 <span>
                   {updaterStatus?.lastStatus?.message ||
                     `Connecté au dépôt MyMasha/MashVoice (v${updaterStatus?.currentVersion || '1.0.6'}).`}
                 </span>
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                Installation atomique directe sans pop-up bleue SmartScreen (aucun attribut navigateur{' '}
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                Installation atomique directe sans pop-up SmartScreen (aucun attribut navigateur{' '}
                 <code>Zone.Identifier</code>), signature <code>Ed25519</code> vérifiée et ouverture
-                automatique du Changelog au redémarrage.
+                automatique des notes de version au redémarrage.
               </div>
 
               {updaterStatus?.lastStatus?.updateAvailable ? (
@@ -669,7 +745,7 @@ export default function SecureLauncher({
                   className="btn-gold-cta"
                   style={{ textDecoration: 'none', padding: '9px 16px', fontSize: 12.5 }}
                 >
-                  <ExternalLink size={15} /> Voir les Releases Signées sur GitHub (MyMasha/MashVoice)
+                  <ExternalLink size={14} /> Voir les Releases Signées sur GitHub
                 </a>
               )}
             </div>
@@ -678,32 +754,33 @@ export default function SecureLauncher({
 
         {navTab === 'systeme' && (
           <section className="launcher-panel-overlay">
-            <h2 style={{ fontSize: 16, fontFamily: 'var(--font-display)' }}>
-              Diagnostic Système &amp; Sécurité Zero-Trust
+            <h2 style={{ fontSize: 15.5, fontWeight: 600 }}>
+              Diagnostic Système &amp; Architecture Zero-Trust
             </h2>
-            <div className="hw-card" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-              <div>• CPU Détecté : {bootstrap?.hostSpecs?.cpuModel} ({bootstrap?.hostSpecs?.cpuCores} coeurs)</div>
-              <div>• RAM Système : {bootstrap?.hostSpecs?.totalMemMb} Mo</div>
-              <div>• Budget RAM MashVoice : Max {hwConfig.maxRamMb} Mo</div>
-              <div>• Isolation Vocale : MashKrisp™ AudioWorklet (&lt; 3 ms latence)</div>
-              <div>• Relais Zero-IP : wss://zyntra.win/api/mashvoice/ws (E2EE ECDH P-256 + AES-256-GCM)</div>
-              <div>• Auto-Update : Remplacement atomique .exe sans SmartScreen + Changelog auto</div>
+            <div
+              className="hw-card"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.65, color: 'var(--text-secondary)' }}
+            >
+              <div>CPU détecté : {bootstrap?.hostSpecs?.cpuModel || 'x64'} ({bootstrap?.hostSpecs?.cpuCores || 8} coeurs)</div>
+              <div>RAM système : {bootstrap?.hostSpecs?.totalMemMb || 16384} Mo</div>
+              <div>Budget RAM MashVoice : max {hwConfig.maxRamMb} Mo</div>
+              <div>Isolation vocale : MashKrisp™ AudioWorklet (&lt; 2.8 ms)</div>
+              <div>Relais Zero-IP : wss://zyntra.win/api/mashvoice/ws (ECDH P-256 + AES-256-GCM)</div>
+              <div>Mise à jour : remplacement atomique signé Ed25519</div>
             </div>
           </section>
         )}
       </main>
 
-      {/* Bottom Bar (exact MASHCLIENT feel with golden CTA button) */}
+      {/* Bottom Telemetry & Quick Action Bar */}
       <footer className="launcher-bottombar">
         <div className="bottom-status-chips">
           <span className="status-chip highlight">
-            <Lock size={12} color="#f5c26b" /> Token Obligatoire
+            <Lock size={11} /> Chiffrement ECDH P-256 · AES-256-GCM
           </span>
-          <span className="status-chip">MashKrisp™ IA</span>
-          <span className="status-chip">Zero-IP Zyntra</span>
           <span className="jvm-summary">
-            RAM: Max {hwConfig.maxRamMb} Mo • {hwConfig.renderBackend.toUpperCase()} • Pause Shader En Jeu:{' '}
-            {hwConfig.pauseShaderInGame ? 'OUI (0% GPU)' : 'NON'}
+            Moteur Rust · Max {hwConfig.maxRamMb} Mo RAM · {hwConfig.renderBackend.toUpperCase()} · Pause shader en jeu :{' '}
+            {hwConfig.pauseShaderInGame ? 'Auto' : 'Off'}
           </span>
         </div>
 
@@ -724,12 +801,12 @@ export default function SecureLauncher({
             handleTokenLogin();
           }}
         >
-          <Play size={15} fill="currentColor" />
+          <Play size={13} fill="currentColor" />
           {submitting
-            ? 'VÉRIFICATION...'
+            ? 'Vérification...'
             : authMode === 'qr' && navTab === 'connexion'
-              ? 'SCANNER DEPUIS MOBILE'
-              : 'SE CONNECTER'}
+              ? 'Scanner depuis Mobile'
+              : 'Se connecter'}
         </button>
       </footer>
     </div>

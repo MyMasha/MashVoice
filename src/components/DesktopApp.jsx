@@ -21,7 +21,6 @@ import {
   Minimize2,
   Smartphone,
   Gamepad2,
-  Sparkles,
   UserPlus,
   Copy,
   Check,
@@ -1519,14 +1518,12 @@ export default function DesktopApp({
 
   return (
     <div className="workspace-shell">
-      {/* Top Singularity System & Telemetry Titlebar */}
+      {/* Top System & Telemetry Titlebar */}
       <header className="workspace-titlebar">
         <div className="brand-cluster">
-          <div className="brand-mark" style={{ width: 18, height: 18 }} />
-          <span className="brand-title" style={{ fontSize: 11.5 }}>
-            MASHVOICE
-          </span>
-          <span className="singularity-badge">SINGULARITY 4.4</span>
+          <div className="brand-mark" />
+          <span className="brand-title">MASHVOICE</span>
+          <span className="singularity-badge">5.0</span>
         </div>
 
         <div className="telemetry-strip">
@@ -1545,39 +1542,38 @@ export default function DesktopApp({
           >
             <Gamepad2 size={12} />
             {activeGameTitle
-              ? `En Jeu : ${activeGameTitle} • Shader 0% GPU`
-              : 'Mode Jeu Auto : Veille'}
+              ? `En Jeu : ${activeGameTitle} · 0% GPU`
+              : 'Mode Jeu : Veille'}
           </button>
 
           <span className="telemetry-pill">
-            RAM: {nativeTelemetry.rssMb} / {hwConfig.maxRamMb} Mo
+            RAM {nativeTelemetry.rssMb}/{hwConfig.maxRamMb} Mo
           </span>
 
           <button
             type="button"
             className="telemetry-pill"
             style={{
-              color: streamSettings.krispMode !== 'off' ? '#6ce0ad' : 'var(--text-secondary)',
+              color: streamSettings.krispMode !== 'off' ? 'var(--emerald)' : 'var(--text-secondary)',
               borderColor:
                 streamSettings.krispMode !== 'off'
-                  ? 'rgba(72, 199, 142, 0.36)'
+                  ? 'rgba(62, 207, 142, 0.28)'
                   : 'var(--border-subtle)',
             }}
             onClick={handleToggleQuickKrisp}
             title="Activer / désactiver MashKrisp™ IA Anti-Clavier"
           >
             <Waves size={12} />
-            Krisp IA : {streamSettings.krispMode === 'off' ? 'OFF' : 'ON'}
+            Krisp {streamSettings.krispMode === 'off' ? 'OFF' : 'ON'}
           </button>
 
           <button
             type="button"
             className="telemetry-pill"
-            style={{ color: 'var(--gold-bright)', borderColor: 'var(--gold-border)' }}
             onClick={onToggleMobileCompanion}
           >
             <Smartphone size={12} />
-            {mobileCompanionOpen ? 'Masquer Mobile' : 'App Mobile & QR'}
+            {mobileCompanionOpen ? 'Masquer Mobile' : 'Mobile & QR'}
           </button>
         </div>
 
@@ -1606,8 +1602,9 @@ export default function DesktopApp({
             </button>
           </div>
         ) : (
-          <div style={{ fontSize: 11, color: 'var(--emerald)', fontFamily: 'var(--font-mono)' }}>
-            ● Token Vérifié
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--emerald)' }} />
+            E2EE Vérifié
           </div>
         )}
       </header>
@@ -1629,7 +1626,7 @@ export default function DesktopApp({
               }
             }}
           >
-            <MessageSquare size={20} />
+            <MessageSquare size={19} />
             {incomingRequests.length > 0 && (
               <span className="rail-badge">{incomingRequests.length}</span>
             )}
@@ -1682,7 +1679,7 @@ export default function DesktopApp({
             title="Créer ou rejoindre un serveur communautaire P2P"
             onClick={() => setServerModalMode('create-or-join')}
           >
-            <Plus size={20} />
+            <Plus size={19} />
           </button>
         </nav>
 
@@ -1691,8 +1688,10 @@ export default function DesktopApp({
           {selectedServerId === 'dms' ? (
             <>
               <div className="sidebar-header">
-                <span>Messages Privés P2P</span>
-                <Sparkles size={15} color="#f5c26b" />
+                <span>Messages Privés</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)', fontWeight: 500 }}>
+                  P2P
+                </span>
               </div>
 
               <div className="sidebar-scroll">
@@ -1703,24 +1702,24 @@ export default function DesktopApp({
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       fontSize: 10.5,
-                      fontWeight: 700,
-                      color: 'var(--gold-bright)',
-                      letterSpacing: '0.03em',
+                      fontWeight: 600,
+                      color: 'var(--text-muted)',
+                      letterSpacing: '0.04em',
                     }}
                   >
-                    <span>MON PSEUDO MASHVOICE</span>
+                    <span>MON PSEUDO ZERO-IP</span>
                     <span
                       style={{
-                        color: meshStatus.online ? 'var(--emerald)' : 'var(--gold-bright)',
+                        color: meshStatus.online ? 'var(--emerald)' : 'var(--gold-primary)',
                         fontFamily: 'var(--font-mono)',
                         fontSize: 10,
                       }}
                     >
-                      {meshStatus.online ? '● Zyntra Actif' : '○ Connexion...'}
+                      {meshStatus.online ? '● zyntra.win' : '○ Connexion...'}
                     </span>
                   </div>
-                  <div style={{ fontSize: 10.8, color: 'var(--text-secondary)', lineHeight: 1.35 }}>
-                    Donne simplement ton <strong>Pseudo</strong> à ton ami (zéro adresse IP) :
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                    Partage ton pseudo pour discuter ou appeler sans exposer d&apos;IP :
                   </div>
                   <button
                     type="button"
@@ -1728,8 +1727,7 @@ export default function DesktopApp({
                     style={{
                       justifyContent: 'center',
                       fontSize: 11.5,
-                      borderColor: 'rgba(72, 199, 142, 0.45)',
-                      color: '#6ce0ad',
+                      fontFamily: 'var(--font-mono)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 6,
@@ -1748,12 +1746,12 @@ export default function DesktopApp({
                 </div>
 
                 <form onSubmit={handleAddFriend} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div className="cat-header">AJOUTER UN AMI PAR PSEUDO</div>
+                  <div className="cat-header">AJOUTER UN AMI</div>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <input
                       className="mash-input"
                       style={{ padding: '7px 10px', fontSize: 12 }}
-                      placeholder="Pseudo de ton ami (ex: v0dka)"
+                      placeholder="Pseudo (ex: v0dka)"
                       value={friendQuery}
                       onChange={(e) => setFriendQuery(e.target.value)}
                     />
@@ -1772,7 +1770,7 @@ export default function DesktopApp({
                     </div>
                   )}
                   {friendError && (
-                    <div style={{ fontSize: 11, color: '#ff8e8e', lineHeight: 1.35 }}>
+                    <div style={{ fontSize: 11, color: 'var(--crimson)', lineHeight: 1.35 }}>
                       {friendError}
                     </div>
                   )}
@@ -1780,17 +1778,17 @@ export default function DesktopApp({
 
                 {incomingRequests.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <div className="cat-header" style={{ color: 'var(--gold-bright)' }}>
-                      DEMANDES D&apos;AMIS REÇUES ({incomingRequests.length})
+                    <div className="cat-header" style={{ color: 'var(--emerald)' }}>
+                      DEMANDES REÇUES ({incomingRequests.length})
                     </div>
                     {incomingRequests.map((req) => (
                       <div
                         key={req.peerId || req.id}
                         style={{
                           padding: '8px 10px',
-                          borderRadius: 9,
-                          background: 'rgba(72, 199, 142, 0.1)',
-                          border: '1px solid rgba(72, 199, 142, 0.35)',
+                          borderRadius: 'var(--radius-xs)',
+                          background: 'var(--emerald-bg)',
+                          border: '1px solid rgba(62, 207, 142, 0.28)',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
@@ -1800,7 +1798,7 @@ export default function DesktopApp({
                         <div style={{ minWidth: 0 }}>
                           <div
                             style={{
-                              fontWeight: 700,
+                              fontWeight: 600,
                               fontSize: 12.5,
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
@@ -1809,7 +1807,7 @@ export default function DesktopApp({
                           >
                             {req.displayName}
                           </div>
-                          <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                          <div style={{ fontSize: 10.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                             @{req.username}#{req.tag}
                           </div>
                         </div>
@@ -1820,8 +1818,8 @@ export default function DesktopApp({
                             style={{
                               padding: '4px 8px',
                               fontSize: 11,
-                              color: '#48c78e',
-                              borderColor: 'rgba(72, 199, 142, 0.5)',
+                              color: 'var(--emerald)',
+                              borderColor: 'rgba(62, 207, 142, 0.4)',
                             }}
                             onClick={() => handleAcceptFriendRequest(req)}
                             title="Accepter la demande d'ami"
@@ -1843,11 +1841,11 @@ export default function DesktopApp({
                 )}
 
                 <div>
-                  <div className="cat-header">CONVERSATIONS DIRECTES ({workspace.dmChannels.length})</div>
+                  <div className="cat-header">MESSAGES DIRECTS ({workspace.dmChannels.length})</div>
                   <div className="channel-list" style={{ marginTop: 6 }}>
                     {workspace.dmChannels.length === 0 && (
                       <div style={{ fontSize: 11.5, color: 'var(--text-muted)', padding: '6px 4px' }}>
-                        Entre simplement le pseudo de ton ami ci-dessus pour discuter et l&apos;appeler en P2P !
+                        Entre le pseudo d&apos;un ami ci-dessus pour démarrer une session P2P chiffrée.
                       </div>
                     )}
                     {workspace.dmChannels.map(({ id, peer }) => (
@@ -1869,7 +1867,7 @@ export default function DesktopApp({
                               width: 28,
                               height: 28,
                               fontSize: 11,
-                              background: peer.avatarColor || '#e8a849',
+                              background: peer.avatarColor || '#e5a952',
                               flexShrink: 0,
                             }}
                           >
@@ -1889,7 +1887,7 @@ export default function DesktopApp({
                                 whiteSpace: 'nowrap',
                               }}
                             >
-                              {peer.activity ? `🎮 ${peer.activity.name}` : peer.customStatus || 'En ligne'}
+                              {peer.activity ? `En jeu · ${peer.activity.name}` : peer.customStatus || 'En ligne'}
                             </div>
                           </div>
                         </div>
@@ -1911,7 +1909,7 @@ export default function DesktopApp({
           ) : (
             currentServer && (
               <>
-                {/* Rich Server Banner Header + Context Menu / Server Settings Trigger */}
+                {/* Server Banner Header + Context Menu / Server Settings Trigger */}
                 <div
                   className="server-banner-header"
                   style={currentBannerStyle || undefined}
@@ -1940,8 +1938,8 @@ export default function DesktopApp({
                   </button>
 
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-                    <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.78)' }}>
-                      {currentServer.members?.length || 1} membre(s)
+                    <span style={{ fontSize: 10.5, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
+                      {currentServer.members?.length || 1} membre{(currentServer.members?.length || 1) > 1 ? 's' : ''}
                     </span>
                     <div style={{ display: 'flex', gap: 3 }} onClick={(e) => e.stopPropagation()}>
                       <button
@@ -1951,11 +1949,11 @@ export default function DesktopApp({
                         onClick={() => {
                           navigator.clipboard?.writeText(currentServer.inviteCode);
                           setCopiedInvite(true);
-                          showToast(`🔗 Code d'invitation copié : ${currentServer.inviteCode}`);
+                          showToast(`Code d'invitation copié : ${currentServer.inviteCode}`);
                           setTimeout(() => setCopiedInvite(false), 1600);
                         }}
                       >
-                        {copiedInvite ? <Check size={13} color="#48c78e" /> : <Copy size={13} />}
+                        {copiedInvite ? <Check size={13} color="var(--emerald)" /> : <Copy size={13} />}
                       </button>
                       <button
                         type="button"
@@ -1965,7 +1963,7 @@ export default function DesktopApp({
                           setServerSettingsTarget({ serverId: currentServer.id, tab: 'overview' })
                         }
                       >
-                        <Settings size={14} color="#f5c26b" />
+                        <Settings size={14} />
                       </button>
                       <button
                         type="button"
@@ -2047,7 +2045,7 @@ export default function DesktopApp({
                                               width: 20,
                                               height: 20,
                                               fontSize: 9.5,
-                                              background: occ.avatarColor || '#e8a849',
+                                              background: occ.avatarColor || '#e5a952',
                                             }}
                                           >
                                             {occ.displayName?.[0]?.toUpperCase()}
@@ -2059,7 +2057,7 @@ export default function DesktopApp({
                                           {occ.cameraOn && !occ.screenOn && (
                                             <span className="p2p-e2ee-tag">CAM</span>
                                           )}
-                                          {occ.muted && <MicOff size={11} color="#e25555" />}
+                                          {occ.muted && <MicOff size={11} color="var(--crimson)" />}
                                         </div>
                                       </div>
                                     ))}
@@ -2081,15 +2079,18 @@ export default function DesktopApp({
           {activeVoiceRoomId && (
             <div className="voice-connected-dock">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--emerald)' }}>
-                    ● Vocal P2P Connecté ({p2pStats.rttMs} ms)
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--emerald)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>● Connecté en P2P</span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5 }}>
+                      {p2pStats.rttMs} ms
+                    </span>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                    {activeVoiceLabel} • {(p2pStats.bitrateKbps / 1000).toFixed(1)} Mbps
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {activeVoiceLabel} · {(p2pStats.bitrateKbps / 1000).toFixed(1)} Mbps
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 5 }}>
+                <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
                   <button
                     type="button"
                     className={`dock-action-btn ${streamSettings.krispMode !== 'off' ? 'active-krisp' : ''}`}
@@ -2120,7 +2121,7 @@ export default function DesktopApp({
               {!micState.hasRealMic && (
                 <div className="mic-recovery-alert">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600 }}>
-                    <AlertTriangle size={13} color="#f5c26b" />
+                    <AlertTriangle size={13} color="var(--gold-primary)" />
                     <span>Micro bloqué ou non autorisé</span>
                   </div>
                   <div style={{ display: 'flex', gap: 5 }}>
@@ -2183,7 +2184,7 @@ export default function DesktopApp({
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
               <div
                 className={`avatar-circle ${localSpeaking ? 'speaking' : ''}`}
-                style={{ background: me?.avatarColor || '#e8a849' }}
+                style={{ background: me?.avatarColor || '#e5a952' }}
               >
                 {me?.displayName?.[0]?.toUpperCase() || 'M'}
                 <span className={`presence-dot ${me?.status || 'online'}`} />
@@ -2191,7 +2192,7 @@ export default function DesktopApp({
               <div style={{ minWidth: 0 }}>
                 <div
                   style={{
-                    fontWeight: 700,
+                    fontWeight: 600,
                     fontSize: 13,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
@@ -2202,7 +2203,7 @@ export default function DesktopApp({
                     ? serverPrefsById[currentServer.id].nickname
                     : me?.displayName}
                 </div>
-                <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 10.5, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                   @{me?.username}#{me?.tag || '0001'}
                 </div>
               </div>
@@ -2222,7 +2223,10 @@ export default function DesktopApp({
                 }
               >
                 {micMuted || (activeVoiceRoomId && !micState.hasRealMic) ? (
-                  <MicOff size={16} color={activeVoiceRoomId && !micState.hasRealMic ? '#f5c26b' : '#e25555'} />
+                  <MicOff
+                    size={16}
+                    color={activeVoiceRoomId && !micState.hasRealMic ? 'var(--gold-primary)' : 'var(--crimson)'}
+                  />
                 ) : (
                   <Mic size={16} />
                 )}
@@ -2233,7 +2237,7 @@ export default function DesktopApp({
                 onClick={toggleDeafen}
                 title={deafened ? 'Réactiver le son' : 'Mettre en sourdine'}
               >
-                <Headphones size={16} color={deafened ? '#e25555' : 'currentColor'} />
+                <Headphones size={16} color={deafened ? 'var(--crimson)' : 'currentColor'} />
               </button>
               <button
                 type="button"
@@ -2255,20 +2259,21 @@ export default function DesktopApp({
               quality={hwConfig.shaderPreset || 'balanced'}
               paused={false}
               offsetX={0.22}
-              opacity={0.14}
+              opacity={0.1}
             />
           )}
 
           <header className="stage-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
               {selectedServerId === 'dms' ? (
-                <MessageSquare size={18} color="#f5c26b" style={{ flexShrink: 0 }} />
+                <MessageSquare size={17} color="var(--text-muted)" style={{ flexShrink: 0 }} />
               ) : (
-                <Hash size={18} color="#f5c26b" style={{ flexShrink: 0 }} />
+                <Hash size={17} color="var(--text-muted)" style={{ flexShrink: 0 }} />
               )}
               <strong
                 style={{
-                  fontSize: 15,
+                  fontSize: 14.5,
+                  fontWeight: 600,
                   maxWidth: 280,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -2301,7 +2306,7 @@ export default function DesktopApp({
                   }
                   title="Ouvrir les paramètres du serveur"
                 >
-                  <Settings size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
+                  <Settings size={12} />
                   Serveur
                 </button>
               )}
@@ -2331,16 +2336,19 @@ export default function DesktopApp({
           {/* Global Friend Request Notification Banner */}
           {selectedServerId !== 'dms' && incomingRequests.length > 0 && (
             <div className="call-banner friend-banner">
-              <div style={{ fontSize: 12.5 }}>
-                🔔 <strong>{incomingRequests[0].displayName}</strong> (@
-                {incomingRequests[0].username}#{incomingRequests[0].tag}) t&apos;a envoyé une demande
-                d&apos;ami P2P !
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+                <UserPlus size={14} color="var(--emerald)" />
+                <span>
+                  <strong>{incomingRequests[0].displayName}</strong> (@
+                  {incomingRequests[0].username}#{incomingRequests[0].tag}) t&apos;a envoyé une demande
+                  d&apos;ami P2P
+                </span>
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                 <button
                   type="button"
                   className="btn-chip"
-                  style={{ color: '#48c78e', borderColor: 'rgba(72, 199, 142, 0.55)' }}
+                  style={{ color: 'var(--emerald)', borderColor: 'rgba(62, 207, 142, 0.45)' }}
                   onClick={() => handleAcceptFriendRequest(incomingRequests[0])}
                 >
                   <UserCheck size={13} /> Accepter
@@ -2356,7 +2364,7 @@ export default function DesktopApp({
             </div>
           )}
 
-          {/* Incoming P2P Call Ring Banner (with animated pulse + musical ringtone) */}
+          {/* Incoming P2P Call Ring Banner */}
           {incomingCall && activeVoiceRoomId !== incomingCall.roomId && (
             <div className="call-banner incoming-ring-banner">
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13 }}>
@@ -2393,7 +2401,7 @@ export default function DesktopApp({
             </div>
           )}
 
-          {/* Outgoing P2P Call Ringing Banner (with Discord-style waiting music) */}
+          {/* Outgoing P2P Call Ringing Banner */}
           {outgoingRingingPeer && activeVoiceRoomId === outgoingRingingPeer.roomId && (
             <div className="call-banner outgoing-ring-banner">
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5 }}>
@@ -2429,11 +2437,11 @@ export default function DesktopApp({
                       color: 'var(--text-secondary)',
                     }}
                   >
-                    {normalizeResolutionKey(streamSettings.resolution)} • {streamSettings.fps} FPS • Ping {p2pStats.rttMs} ms
+                    {normalizeResolutionKey(streamSettings.resolution)} · {streamSettings.fps} FPS · {p2pStats.rttMs} ms
                   </span>
                   {streamSettings.krispMode !== 'off' && (
                     <span className="krisp-stage-pill">
-                      <Waves size={11} /> MashKrisp™ Anti-Clavier
+                      <Waves size={11} /> MashKrisp™
                     </span>
                   )}
                 </div>
@@ -2458,7 +2466,7 @@ export default function DesktopApp({
                 </div>
               </div>
 
-              {/* Quick Live Stream Resolution (720p / 1080p / 2K / 4K) & FPS (15 / 30 / 60 / 120) Bar */}
+              {/* Quick Live Stream Resolution & FPS Segmented Bar */}
               <div
                 style={{
                   display: 'flex',
@@ -2467,66 +2475,66 @@ export default function DesktopApp({
                   flexWrap: 'wrap',
                   gap: 8,
                   padding: '6px 10px',
-                  borderRadius: 9,
-                  background: 'rgba(8, 9, 14, 0.55)',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--bg-void)',
                   border: '1px solid var(--border-subtle)',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: 10.5, color: 'var(--text-muted)', marginRight: 2 }}>
-                    Qualité :
-                  </span>
-                  {STREAM_RESOLUTIONS.map((res) => (
-                    <button
-                      key={res}
-                      type="button"
-                      className={`preset-pill ${normalizeResolutionKey(streamSettings.resolution) === res ? 'selected' : ''}`}
-                      style={{ padding: '2px 8px', fontSize: 10.5 }}
-                      onClick={() =>
-                        handleUpdateStreamSettings({
-                          resolution: res,
-                          ...(streamSettings.customBitrate
-                            ? {}
-                            : {
-                                maxBitrateKbps: computeRecommendedBitrateKbps(
-                                  res,
-                                  streamSettings.fps
-                                ),
-                              }),
-                        })
-                      }
-                    >
-                      {res}
-                    </button>
-                  ))}
-                  <span style={{ width: 6, height: 12, borderLeft: '1px solid var(--border-subtle)', marginLeft: 4 }} />
-                  {STREAM_FPS_OPTIONS.map((fps) => (
-                    <button
-                      key={fps}
-                      type="button"
-                      className={`preset-pill ${Number(streamSettings.fps) === fps ? 'selected' : ''}`}
-                      style={{ padding: '2px 8px', fontSize: 10.5 }}
-                      onClick={() =>
-                        handleUpdateStreamSettings({
-                          fps,
-                          ...(streamSettings.customBitrate
-                            ? {}
-                            : {
-                                maxBitrateKbps: computeRecommendedBitrateKbps(
-                                  streamSettings.resolution,
-                                  fps
-                                ),
-                              }),
-                        })
-                      }
-                    >
-                      {fps} FPS
-                    </button>
-                  ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <div className="mv-seg">
+                    {STREAM_RESOLUTIONS.map((res) => (
+                      <button
+                        key={res}
+                        type="button"
+                        className={`mv-seg-btn ${normalizeResolutionKey(streamSettings.resolution) === res ? 'active' : ''}`}
+                        style={{ padding: '3px 9px', fontSize: 10.5 }}
+                        onClick={() =>
+                          handleUpdateStreamSettings({
+                            resolution: res,
+                            ...(streamSettings.customBitrate
+                              ? {}
+                              : {
+                                  maxBitrateKbps: computeRecommendedBitrateKbps(
+                                    res,
+                                    streamSettings.fps
+                                  ),
+                                }),
+                          })
+                        }
+                      >
+                        {res}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mv-seg">
+                    {STREAM_FPS_OPTIONS.map((fps) => (
+                      <button
+                        key={fps}
+                        type="button"
+                        className={`mv-seg-btn ${Number(streamSettings.fps) === fps ? 'active' : ''}`}
+                        style={{ padding: '3px 9px', fontSize: 10.5 }}
+                        onClick={() =>
+                          handleUpdateStreamSettings({
+                            fps,
+                            ...(streamSettings.customBitrate
+                              ? {}
+                              : {
+                                  maxBitrateKbps: computeRecommendedBitrateKbps(
+                                    streamSettings.resolution,
+                                    fps
+                                  ),
+                                }),
+                          })
+                        }
+                      >
+                        {fps} FPS
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                <span style={{ fontSize: 10.5, color: '#6ce0ad', fontFamily: 'var(--font-mono)' }}>
-                  ✓ Anti-Freeze Minecraft • Sans barre en jeu
+                <span style={{ fontSize: 10.5, color: 'var(--emerald)', fontFamily: 'var(--font-mono)' }}>
+                  Anti-Freeze · Zéro barre en jeu
                 </span>
               </div>
 
@@ -2539,10 +2547,10 @@ export default function DesktopApp({
                     <div
                       className="avatar-circle"
                       style={{
-                        width: 68,
-                        height: 68,
-                        fontSize: 24,
-                        background: me?.avatarColor || '#e8a849',
+                        width: 64,
+                        height: 64,
+                        fontSize: 22,
+                        background: me?.avatarColor || '#e5a952',
                       }}
                     >
                       {me?.displayName?.[0]?.toUpperCase()}
@@ -2572,10 +2580,10 @@ export default function DesktopApp({
                             className="avatar-circle"
                             style={{
                               position: 'absolute',
-                              width: 68,
-                              height: 68,
-                              fontSize: 24,
-                              background: peerMeta?.avatarColor || '#5ec2a6',
+                              width: 64,
+                              height: 64,
+                              fontSize: 22,
+                              background: peerMeta?.avatarColor || '#3ecf8e',
                             }}
                           >
                             {peerMeta?.displayName?.[0]?.toUpperCase() || 'P'}
@@ -2601,10 +2609,10 @@ export default function DesktopApp({
                       <div
                         className="avatar-circle"
                         style={{
-                          width: 68,
-                          height: 68,
-                          fontSize: 24,
-                          background: p.avatarColor || '#5ec2a6',
+                          width: 64,
+                          height: 64,
+                          fontSize: 22,
+                          background: p.avatarColor || '#3ecf8e',
                         }}
                       >
                         {p.displayName?.[0]?.toUpperCase()}
@@ -2612,7 +2620,7 @@ export default function DesktopApp({
                       <div className="tile-overlay-top">
                         <span className="tile-badge">{p.displayName}</span>
                         {p.deviceType?.includes('mobile') && (
-                          <span className="p2p-e2ee-tag">📱 MOBILE</span>
+                          <span className="p2p-e2ee-tag">MOBILE</span>
                         )}
                       </div>
                     </div>
@@ -2628,13 +2636,13 @@ export default function DesktopApp({
                 {currentMessages.map((msg) => {
                   const author = usersMap.get(msg.authorId) || {
                     displayName: 'Pair P2P',
-                    avatarColor: '#e8a849',
+                    avatarColor: '#e5a952',
                   };
                   return (
                     <div key={msg.id} className="msg-row">
                       <div
                         className="avatar-circle"
-                        style={{ background: author.avatarColor || '#e8a849' }}
+                        style={{ background: author.avatarColor || '#e5a952' }}
                       >
                         {author.displayName?.[0]?.toUpperCase()}
                       </div>
@@ -2647,7 +2655,7 @@ export default function DesktopApp({
                               minute: '2-digit',
                             })}
                           </span>
-                          <span className="p2p-e2ee-tag">P2P E2EE</span>
+                          <span className="p2p-e2ee-tag">E2EE</span>
                         </div>
                         {msg.content && <div className="msg-text">{msg.content}</div>}
 
@@ -2660,8 +2668,8 @@ export default function DesktopApp({
                                 style={{
                                   maxWidth: 360,
                                   maxHeight: 260,
-                                  borderRadius: 10,
-                                  border: '1px solid var(--border-strong)',
+                                  borderRadius: 'var(--radius-sm)',
+                                  border: '1px solid var(--border-subtle)',
                                 }}
                               />
                             ) : (
@@ -2669,9 +2677,9 @@ export default function DesktopApp({
                                 href={msg.attachment.dataUrl}
                                 download={msg.attachment.name}
                                 className="btn-chip"
-                                style={{ display: 'inline-block', textDecoration: 'none' }}
+                                style={{ display: 'inline-flex', textDecoration: 'none' }}
                               >
-                                📎 Télécharger {msg.attachment.name}
+                                <Paperclip size={12} /> Télécharger {msg.attachment.name}
                               </a>
                             )}
                           </div>
@@ -2713,8 +2721,8 @@ export default function DesktopApp({
               {/* Message Composer */}
               <div className="composer-wrap">
                 {typingUser && (
-                  <div style={{ fontSize: 11, color: 'var(--gold-bright)', marginBottom: 4 }}>
-                    {typingUser} est en train d&apos;écrire en P2P...
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                    {typingUser} écrit en P2P...
                   </div>
                 )}
                 <form onSubmit={handleSendMessage} className="composer-box">
@@ -2730,7 +2738,7 @@ export default function DesktopApp({
                     title="Partager une image ou un fichier en P2P"
                     onClick={() => fileInputRef.current?.click()}
                   >
-                    <Paperclip size={17} />
+                    <Paperclip size={16} />
                   </button>
                   <input
                     id="chat-composer-input"
@@ -2746,8 +2754,8 @@ export default function DesktopApp({
                       }
                     }}
                   />
-                  <button type="submit" className="btn-chip" style={{ padding: '6px 12px' }}>
-                    <Send size={14} />
+                  <button type="submit" className="btn-gold-cta" style={{ padding: '6px 12px' }}>
+                    <Send size={13} />
                   </button>
                 </form>
               </div>
@@ -2765,7 +2773,7 @@ export default function DesktopApp({
                     {role.name} — {members.length}
                   </span>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 6 }}>
                   {members.map(({ user, topRole }) => (
                     <div
                       key={user.id}
@@ -2787,7 +2795,7 @@ export default function DesktopApp({
                           width: 30,
                           height: 30,
                           fontSize: 12,
-                          background: user.avatarColor || '#e8a849',
+                          background: user.avatarColor || '#e5a952',
                         }}
                       >
                         {user.displayName?.[0]?.toUpperCase()}
@@ -2809,14 +2817,14 @@ export default function DesktopApp({
                         <div
                           style={{
                             fontSize: 10.5,
-                            color: 'var(--text-muted)',
+                            color: user.activity?.type === 'streaming' ? 'var(--emerald)' : 'var(--text-muted)',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
                           }}
                         >
                           {user.activity
-                            ? `${user.activity.type === 'streaming' ? '🟣 Stream:' : '🎮'} ${user.activity.name}`
+                            ? `${user.activity.type === 'streaming' ? '● En direct :' : 'En jeu ·'} ${user.activity.name}`
                             : user.customStatus || 'Connecté P2P'}
                         </div>
                       </div>

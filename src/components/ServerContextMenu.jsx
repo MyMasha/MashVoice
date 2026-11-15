@@ -451,10 +451,10 @@ export function ServerMediaViewerModal({ viewer, onOpenEdit, onClose }) {
   const rawUrl = isBanner ? server.bannerUrl : server.iconUrl;
 
   const bannerPresets = {
-    'singularity-gold': 'linear-gradient(135deg, #1b1307 0%, #5c3a10 48%, #f5c26b 100%)',
-    'void-violet': 'linear-gradient(135deg, #0b0718 0%, #2b1854 55%, #7d56f4 100%)',
-    'cyber-emerald': 'linear-gradient(135deg, #061712 0%, #114b3a 55%, #48c78e 100%)',
-    'crimson-nova': 'linear-gradient(135deg, #1b070a 0%, #5c1622 55%, #e25555 100%)',
+    'singularity-gold': 'linear-gradient(135deg, #14110b 0%, #2b2113 55%, #6e4f23 100%)',
+    'void-violet': 'linear-gradient(135deg, #0d1017 0%, #171e2c 55%, #2b3850 100%)',
+    'cyber-emerald': 'linear-gradient(135deg, #091411 0%, #112b23 55%, #1f5c46 100%)',
+    'crimson-nova': 'linear-gradient(135deg, #170b0d 0%, #331419 55%, #6e2630 100%)',
   };
   const bgStyle =
     rawUrl && (rawUrl.startsWith('http') || rawUrl.startsWith('data:'))
@@ -468,7 +468,7 @@ export function ServerMediaViewerModal({ viewer, onOpenEdit, onClose }) {
         style={{
           width: isBanner ? 580 : 380,
           maxWidth: '94vw',
-          background: '#0b0c12',
+          background: 'var(--bg-stage)',
           border: '1px solid var(--border-strong)',
           padding: 20,
           boxShadow: 'var(--shadow-elevated)',
@@ -489,8 +489,8 @@ export function ServerMediaViewerModal({ viewer, onOpenEdit, onClose }) {
             style={{
               width: '100%',
               height: 210,
-              borderRadius: 14,
-              border: '1px solid var(--border-strong)',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-subtle)',
               display: 'flex',
               alignItems: 'flex-end',
               padding: 16,
@@ -510,7 +510,7 @@ export function ServerMediaViewerModal({ viewer, onOpenEdit, onClose }) {
                   height: 168,
                   borderRadius: 36,
                   objectFit: 'cover',
-                  border: '2px solid var(--gold-border)',
+                  border: '1px solid var(--border-strong)',
                 }}
               />
             ) : (
@@ -519,14 +519,14 @@ export function ServerMediaViewerModal({ viewer, onOpenEdit, onClose }) {
                   width: 168,
                   height: 168,
                   borderRadius: 36,
-                  background: 'linear-gradient(145deg, #1b1e2b, #0c0e15)',
-                  border: '2px solid var(--gold-border)',
+                  background: 'var(--bg-elevated)',
+                  border: '1px solid var(--border-strong)',
                   display: 'grid',
                   placeItems: 'center',
                   fontFamily: 'var(--font-display)',
                   fontSize: 48,
                   fontWeight: 700,
-                  color: 'var(--gold-bright)',
+                  color: 'var(--text-primary)',
                 }}
               >
                 {server.shortName}
