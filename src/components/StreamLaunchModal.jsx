@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MonitorUp, X, Cpu, Gamepad2, EyeOff, Zap } from 'lucide-react';
+import { MonitorUp, X, Cpu, Gamepad2, EyeOff, Zap, ShieldCheck } from 'lucide-react';
 import {
   STREAM_RESOLUTIONS,
   STREAM_FPS_OPTIONS,
@@ -19,8 +19,9 @@ export default function StreamLaunchModal({
   );
   const [fps, setFps] = useState(Number(streamSettings?.fps) || 60);
   const [preferredCodec, setPreferredCodec] = useState(streamSettings?.preferredCodec || 'H264');
+  // false = 'maintain-resolution' (Netteté 1:1 Anti-Flou, recommended so fast games like Minecraft never drop to 360p!)
   const [maintainFramerate, setMaintainFramerate] = useState(
-    streamSettings?.maintainFramerate !== false
+    Boolean(streamSettings?.maintainFramerate)
   );
 
   const recommendedKbps = computeRecommendedBitrateKbps(resolution, fps);
@@ -75,7 +76,7 @@ export default function StreamLaunchModal({
                 Partager un jeu ou écran
               </h3>
               <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
-                Capture GPU Zero-Copy · Audio inclus · Sans bordure en jeu
+                Capture GPU Zero-Copy · CABAC High Profile · Latence ~25 ms
               </div>
             </div>
           </div>
@@ -146,8 +147,8 @@ export default function StreamLaunchModal({
           </div>
         </div>
 
-        {/* 3. Hardware Codec & Frame Pacing */}
-        <div className="hw-card" style={{ padding: 12, gap: 9 }}>
+        {/* 3. Hardware Codec & Anti-Blur Sharpness Mode */}
+        <div className="hw-card" style={{ padding: 12, gap: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 500 }}>
               <Cpu size={14} color="var(--text-secondary)" /> Encodeur matériel
@@ -161,30 +162,40 @@ export default function StreamLaunchModal({
                   style={{ padding: '4px 10px', fontSize: 11.5, fontFamily: 'var(--font-mono)' }}
                   onClick={() => setPreferredCodec(codec)}
                 >
-                  {codec === 'H264' ? 'H.264 NVENC' : codec}
+                  {codec === 'H264' ? 'H.264 High' : codec}
                 </button>
               ))}
             </div>
           </div>
 
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              fontSize: 12,
-              color: 'var(--text-secondary)',
-              cursor: 'pointer',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={maintainFramerate}
-              onChange={(e) => setMaintainFramerate(e.target.checked)}
-              style={{ accentColor: 'var(--gold-primary)' }}
-            />
-            <span>Priorité absolue aux FPS fluides en jeu (Anti-Freeze OpenGL / DirectX)</span>
-          </label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div className="field-label" style={{ fontSize: 11.5 }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <ShieldCheck size={13} color="var(--emerald)" /> Priorité d&apos;encodage en mouvement rapide
+              </span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--emerald)' }}>
+                {maintainFramerate ? 'Sous-échantillonnage auto' : ' Pixel 1:1 verrouillé'}
+              </span>
+            </div>
+            <div className="mv-seg" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <button
+                type="button"
+                className={`mv-seg-btn ${!maintainFramerate ? 'active' : ''}`}
+                style={{ padding: '7px 8px', fontSize: 11.5 }}
+                onClick={() => setMaintainFramerate(false)}
+              >
+                Netteté 1:1 · Anti-Flou
+              </button>
+              <button
+                type="button"
+                className={`mv-seg-btn ${maintainFramerate ? 'active' : ''}`}
+                style={{ padding: '7px 8px', fontSize: 11.5 }}
+                onClick={() => setMaintainFramerate(true)}
+              >
+                Connexion faible · FPS
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* 4. In-Game Overlay Removal + Minecraft Fullscreen Anti-Freeze Tip */}

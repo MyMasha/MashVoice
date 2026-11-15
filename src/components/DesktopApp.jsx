@@ -53,22 +53,87 @@ import { mashSounds } from '../lib/soundEffects.js';
 
 const QUICK_EMOJIS = ['🔥', '⚡', '🪐', '🎯', '🛡️'];
 
-function VideoStreamBox({ stream, muted = false }) {
+function VideoStreamBox({ stream, muted = false, isVideo = true, showControls = false }) {
   const ref = useRef(null);
+  const [resLabel, setResLabel] = useState('');
+
   useEffect(() => {
-    if (ref.current && stream) {
-      ref.current.srcObject = stream;
+    const el = ref.current;
+    if (!el || !stream) return;
+    if (el.srcObject !== stream) {
+      el.srcObject = stream;
     }
-  }, [stream]);
+    const syncPlaybackAndDims = () => {
+      if (el.paused) {
+        el.play?.().catch(() => {});
+      }
+      if (isVideo && el.videoWidth > 0 && el.videoHeight > 0) {
+        setResLabel(`${el.videoWidth}×${el.videoHeight}`);
+      }
+    };
+    syncPlaybackAndDims();
+    el.addEventListener('loadedmetadata', syncPlaybackAndDims);
+    el.addEventListener('resize', syncPlaybackAndDims);
+    el.addEventListener('pause', syncPlaybackAndDims);
+    return () => {
+      el.removeEventListener('loadedmetadata', syncPlaybackAndDims);
+      el.removeEventListener('resize', syncPlaybackAndDims);
+      el.removeEventListener('pause', syncPlaybackAndDims);
+    };
+  }, [stream, isVideo]);
+
+  if (!isVideo) {
+    return <audio ref={ref} autoPlay muted={muted} style={{ display: 'none' }} />;
+  }
 
   return (
-    <video
-      ref={ref}
-      autoPlay
-      playsInline
-      muted={muted}
-      onDoubleClick={(e) => e.currentTarget.requestFullscreen?.().catch(() => {})}
-    />
+    <>
+      <video
+        ref={ref}
+        autoPlay
+        playsInline
+        disableRemotePlayback
+        muted={muted}
+        onDoubleClick={(e) => e.currentTarget.requestFullscreen?.().catch(() => {})}
+      />
+      {showControls && (
+        <div className="tile-overlay-bottom">
+          {resLabel ? <span className="tile-res-pill">{resLabel}</span> : <span />}
+          <div style={{ display: 'flex', gap: 6, pointerEvents: 'auto' }}>
+            {typeof document !== 'undefined' && document.pictureInPictureEnabled && (
+              <button
+                type="button"
+                className="tile-ctrl-btn"
+                title="Picture-in-Picture (Fenêtre flottante)"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const v = ref.current;
+                  if (!v) return;
+                  if (document.pictureInPictureElement === v) {
+                    document.exitPictureInPicture?.().catch(() => {});
+                  } else {
+                    v.requestPictureInPicture?.().catch(() => {});
+                  }
+                }}
+              >
+                PiP
+              </button>
+            )}
+            <button
+              type="button"
+              className="tile-ctrl-btn"
+              title="Plein écran (ou double-clic sur la vidéo)"
+              onClick={(e) => {
+                e.stopPropagation();
+                ref.current?.requestFullscreen?.().catch(() => {});
+              }}
+            >
+              <Maximize2 size={12} /> Plein écran
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -179,6 +244,15 @@ export default function DesktopApp({
   const [p2pStats, setP2pStats] = useState({
     rttMs: 7,
     bitrateKbps: 128,
+    txBitrateKbps: 0,
+    rxBitrateKbps: 0,
+    txWidth: 0,
+    txHeight: 0,
+    txFps: 0,
+    rxWidth: 0,
+    rxHeight: 0,
+    rxFps: 0,
+    jitterMs: 0,
     packetsLost: 0,
     activePeers: 0,
     codec: 'H264',
@@ -188,10 +262,10 @@ export default function DesktopApp({
   const [streamSettings, setStreamSettings] = useState(() => ({
     resolution: '1080p',
     fps: 60,
-    maxBitrateKbps: 10500,
+    maxBitrateKbps: computeRecommendedBitrateKbps('1080p', 60),
     customBitrate: false,
     preferredCodec: 'H264',
-    maintainFramerate: true,
+    maintainFramerate: false,
     echoCancellation: true,
     noiseSuppression: true,
     krispMode: loadSavedKrispMode(),
@@ -1430,8 +1504,12 @@ export default function DesktopApp({
 
   const activeGameTitle =
     nativeTelemetry.detectedGame || (simulatedGame ? 'MashClient 1.8.9 (Turbo FPS)' : null);
+  const hasRemoteLiveVideo = remoteStreams.some((rs) =>
+    rs.stream?.getVideoTracks()?.some((t) => t.readyState === 'live' && !t.muted)
+  );
+  const hasActiveVideoStream = Boolean(localPreviewStream || screenOn || cameraOn || hasRemoteLiveVideo);
   const shaderPausedForGame =
-    screenOn ||
+    hasActiveVideoStream ||
     hwConfig.renderBackend === 'cpu-software' ||
     (Boolean(activeGameTitle) && hwConfig.pauseShaderInGame !== false) ||
     hwConfig.shaderPreset === 'turbo';
@@ -2433,11 +2511,16 @@ export default function DesktopApp({
                   <span
                     style={{
                       fontFamily: 'var(--font-mono)',
+                      fontVariantNumeric: 'tabular-nums',
                       fontSize: 11,
-                      color: 'var(--text-secondary)',
+                      color: hasActiveVideoStream ? 'var(--emerald)' : 'var(--text-secondary)',
                     }}
                   >
-                    {normalizeResolutionKey(streamSettings.resolution)} · {streamSettings.fps} FPS · {p2pStats.rttMs} ms
+                    {hasRemoteLiveVideo && !screenOn
+                      ? `${p2pStats.rxWidth && p2pStats.rxHeight ? `${p2pStats.rxWidth}×${p2pStats.rxHeight}` : normalizeResolutionKey(streamSettings.resolution)} · ${p2pStats.rxFps || p2pStats.fps || 60} FPS · ${((p2pStats.bitrateKbps || 0) / 1000).toFixed(1)} Mbps · ${p2pStats.codec || 'H264'} · ${p2pStats.rttMs} ms`
+                      : screenOn || cameraOn
+                        ? `${p2pStats.txWidth && p2pStats.txHeight ? `${p2pStats.txWidth}×${p2pStats.txHeight}` : normalizeResolutionKey(streamSettings.resolution)} · ${p2pStats.txFps || streamSettings.fps} FPS · ${((p2pStats.bitrateKbps || streamSettings.maxBitrateKbps) / 1000).toFixed(1)} Mbps · ${p2pStats.codec || streamSettings.preferredCodec} · ${p2pStats.rttMs} ms`
+                        : `Opus 128k · ${p2pStats.rttMs} ms`}
                   </span>
                   {streamSettings.krispMode !== 'off' && (
                     <span className="krisp-stage-pill">
@@ -2463,10 +2546,19 @@ export default function DesktopApp({
                   <button type="button" className="btn-chip" onClick={handleToggleCamera}>
                     {cameraOn ? 'Couper Caméra' : 'Activer Caméra'}
                   </button>
+                  <button
+                    type="button"
+                    className={`btn-chip ${stageExpanded ? 'active' : ''}`}
+                    onClick={() => setStageExpanded((v) => !v)}
+                    title={stageExpanded ? 'Réduire le lecteur' : 'Mode Cinéma (agrandir le stream)'}
+                  >
+                    {stageExpanded ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+                    {stageExpanded ? 'Vue Salon' : 'Mode Cinéma'}
+                  </button>
                 </div>
               </div>
 
-              {/* Quick Live Stream Resolution & FPS Segmented Bar */}
+              {/* Quick Live Stream Resolution, FPS & 1:1 Anti-Blur Segmented Bar */}
               <div
                 style={{
                   display: 'flex',
@@ -2531,72 +2623,132 @@ export default function DesktopApp({
                       </button>
                     ))}
                   </div>
+                  <div className="mv-seg">
+                    <button
+                      type="button"
+                      className={`mv-seg-btn ${!streamSettings.maintainFramerate ? 'active' : ''}`}
+                      style={{ padding: '3px 9px', fontSize: 10.5 }}
+                      onClick={() => handleUpdateStreamSettings({ maintainFramerate: false })}
+                      title="Verrouille la résolution native 1:1 sans flou en mouvement rapide"
+                    >
+                      Netteté 1:1
+                    </button>
+                    <button
+                      type="button"
+                      className={`mv-seg-btn ${Boolean(streamSettings.maintainFramerate) ? 'active' : ''}`}
+                      style={{ padding: '3px 9px', fontSize: 10.5 }}
+                      onClick={() => handleUpdateStreamSettings({ maintainFramerate: true })}
+                      title="Adapte la résolution sur les connexions faibles"
+                    >
+                      Débit faible
+                    </button>
+                  </div>
                 </div>
 
                 <span style={{ fontSize: 10.5, color: 'var(--emerald)', fontFamily: 'var(--font-mono)' }}>
-                  Anti-Freeze · Zéro barre en jeu
+                  CABAC High · ~25 ms · 0% GPU Fond
                 </span>
               </div>
 
-              <div className="stream-tiles-grid">
-                {/* Self Tile */}
-                <div className={`stream-tile ${localSpeaking ? 'speaking' : ''}`}>
-                  {localPreviewStream ? (
-                    <VideoStreamBox stream={localPreviewStream} muted />
-                  ) : (
+              <div className={`stream-tiles-grid ${hasActiveVideoStream ? 'has-video-spotlight' : ''}`}>
+                {/* Remote WebRTC Live Video Streams First (Spotlight for Viewer!) */}
+                {remoteStreams
+                  .filter(({ stream }) =>
+                    stream?.getVideoTracks()?.some((t) => t.readyState === 'live' && !t.muted)
+                  )
+                  .map(({ peerKey, peerMeta, stream }) => (
+                    <div key={`vid-${peerKey}`} className="stream-tile featured-stream">
+                      <VideoStreamBox stream={stream} muted={deafened} isVideo showControls />
+                      <div className="tile-overlay-top">
+                        <span className="tile-badge">{peerMeta?.displayName || 'Pair P2P'}</span>
+                        <span className="live-tag">
+                          EN DIRECT · {p2pStats.codec || 'H264'}{' '}
+                          {p2pStats.rxWidth && p2pStats.rxHeight
+                            ? `${p2pStats.rxWidth}×${p2pStats.rxHeight}`
+                            : ''}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+
+                {/* Self Tile (Spotlight if streaming locally, compact strip if watching a friend) */}
+                {localPreviewStream ? (
+                  <div className={`stream-tile featured-stream ${localSpeaking ? 'speaking' : ''}`}>
+                    <VideoStreamBox stream={localPreviewStream} muted isVideo showControls />
+                    <div className="tile-overlay-top">
+                      <span className="tile-badge">Vous ({me?.displayName})</span>
+                      {screenOn && (
+                        <span className="live-tag">
+                          EN DIRECT {streamSettings.resolution} {streamSettings.fps}FPS
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    className={`stream-tile ${hasActiveVideoStream ? 'voice-only-tile' : ''} ${localSpeaking ? 'speaking' : ''}`}
+                  >
                     <div
                       className="avatar-circle"
                       style={{
-                        width: 64,
-                        height: 64,
-                        fontSize: 22,
+                        width: hasActiveVideoStream ? 30 : 64,
+                        height: hasActiveVideoStream ? 30 : 64,
+                        fontSize: hasActiveVideoStream ? 12.5 : 22,
                         background: me?.avatarColor || '#e5a952',
                       }}
                     >
                       {me?.displayName?.[0]?.toUpperCase()}
                     </div>
-                  )}
-                  <div className="tile-overlay-top">
-                    <span className="tile-badge">Vous ({me?.displayName})</span>
-                    {screenOn && (
-                      <span className="live-tag">
-                        EN DIRECT {streamSettings.resolution} {streamSettings.fps}FPS
+                    {hasActiveVideoStream ? (
+                      <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>
+                        Vous ({me?.displayName})
                       </span>
+                    ) : (
+                      <div className="tile-overlay-top">
+                        <span className="tile-badge">Vous ({me?.displayName})</span>
+                      </div>
                     )}
                   </div>
-                </div>
+                )}
 
-                {/* Remote WebRTC Stream Tiles */}
-                {remoteStreams.map(({ peerKey, peerMeta, stream }) => {
-                  const hasVideo = stream?.getVideoTracks()?.length > 0;
-                  return (
-                    <div key={peerKey} className="stream-tile">
-                      {hasVideo ? (
-                        <VideoStreamBox stream={stream} />
-                      ) : (
-                        <>
-                          <VideoStreamBox stream={stream} muted={deafened} />
-                          <div
-                            className="avatar-circle"
-                            style={{
-                              position: 'absolute',
-                              width: 64,
-                              height: 64,
-                              fontSize: 22,
-                              background: peerMeta?.avatarColor || '#3ecf8e',
-                            }}
-                          >
-                            {peerMeta?.displayName?.[0]?.toUpperCase() || 'P'}
-                          </div>
-                        </>
-                      )}
-                      <div className="tile-overlay-top">
-                        <span className="tile-badge">{peerMeta?.displayName || 'Pair P2P'}</span>
-                        <span className="p2p-e2ee-tag">E2EE DIRECT</span>
+                {/* Remote WebRTC Audio-Only Peers */}
+                {remoteStreams
+                  .filter(
+                    ({ stream }) =>
+                      !stream?.getVideoTracks()?.some((t) => t.readyState === 'live' && !t.muted)
+                  )
+                  .map(({ peerKey, peerMeta, stream }) => (
+                    <div
+                      key={peerKey}
+                      className={`stream-tile ${hasActiveVideoStream ? 'voice-only-tile' : ''}`}
+                    >
+                      <VideoStreamBox stream={stream} muted={deafened} isVideo={false} />
+                      <div
+                        className="avatar-circle"
+                        style={{
+                          width: hasActiveVideoStream ? 30 : 64,
+                          height: hasActiveVideoStream ? 30 : 64,
+                          fontSize: hasActiveVideoStream ? 12.5 : 22,
+                          background: peerMeta?.avatarColor || '#3ecf8e',
+                        }}
+                      >
+                        {peerMeta?.displayName?.[0]?.toUpperCase() || 'P'}
                       </div>
+                      {hasActiveVideoStream ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1, minWidth: 0, gap: 6 }}>
+                          <span style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {peerMeta?.displayName || 'Pair P2P'}
+                          </span>
+                          <span className="p2p-e2ee-tag">E2EE</span>
+                        </div>
+                      ) : (
+                        <div className="tile-overlay-top">
+                          <span className="tile-badge">{peerMeta?.displayName || 'Pair P2P'}</span>
+                          <span className="p2p-e2ee-tag">E2EE DIRECT</span>
+                        </div>
+                      )}
                     </div>
-                  );
-                })}
+                  ))}
 
                 {/* Room peers without media tracks yet */}
                 {activeRoomPeers
@@ -2605,24 +2757,33 @@ export default function DesktopApp({
                       p.userId !== me?.id && !remoteStreams.some((rs) => rs.peerKey === p.peerKey)
                   )
                   .map((p) => (
-                    <div key={p.peerKey} className="stream-tile">
+                    <div
+                      key={p.peerKey}
+                      className={`stream-tile ${hasActiveVideoStream ? 'voice-only-tile' : ''}`}
+                    >
                       <div
                         className="avatar-circle"
                         style={{
-                          width: 64,
-                          height: 64,
-                          fontSize: 22,
+                          width: hasActiveVideoStream ? 30 : 64,
+                          height: hasActiveVideoStream ? 30 : 64,
+                          fontSize: hasActiveVideoStream ? 12.5 : 22,
                           background: p.avatarColor || '#3ecf8e',
                         }}
                       >
                         {p.displayName?.[0]?.toUpperCase()}
                       </div>
-                      <div className="tile-overlay-top">
-                        <span className="tile-badge">{p.displayName}</span>
-                        {p.deviceType?.includes('mobile') && (
-                          <span className="p2p-e2ee-tag">MOBILE</span>
-                        )}
-                      </div>
+                      {hasActiveVideoStream ? (
+                        <span style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {p.displayName}
+                        </span>
+                      ) : (
+                        <div className="tile-overlay-top">
+                          <span className="tile-badge">{p.displayName}</span>
+                          {p.deviceType?.includes('mobile') && (
+                            <span className="p2p-e2ee-tag">MOBILE</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
               </div>

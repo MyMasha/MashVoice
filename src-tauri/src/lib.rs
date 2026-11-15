@@ -67,6 +67,7 @@ mod win32_overlay_guard {
     const PROCESS_POWER_THROTTLING_CLASS: u32 = 4;
     const PROCESS_POWER_THROTTLING_CURRENT_VERSION: DWORD = 1;
     const PROCESS_POWER_THROTTLING_EXECUTION_SPEED: DWORD = 0x1;
+    const PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION: DWORD = 0x4;
 
     const ES_CONTINUOUS: DWORD = 0x8000_0000;
     const ES_SYSTEM_REQUIRED: DWORD = 0x0000_0001;
@@ -156,8 +157,9 @@ mod win32_overlay_guard {
         };
         let power_state = PROCESS_POWER_THROTTLING_STATE {
             version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
-            control_mask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
-            state_mask: 0, // 0 = never throttle execution speed (disable EcoQoS green leaf)
+            control_mask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+                | PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION,
+            state_mask: 0, // 0 = never throttle execution speed OR 1ms timer resolution (disable EcoQoS + timer coalescing)
         };
 
         unsafe {
@@ -414,11 +416,11 @@ pub fn run() {
         let _ = fs::write(&log_path, format!("MashVoice panic: {info}\n"));
     }));
 
-    // Prevent WebView2 occlusion/background renderer throttling when fullscreen games (Minecraft, CS2, etc.) cover MashVoice
+    // Prevent WebView2 occlusion/background renderer throttling and force GPU zero-copy NVENC/D3D11 video pipelines
     if std::env::var_os("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").is_none() {
         std::env::set_var(
             "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-            "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-ipc-flooding-protection --autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,WebRtcHideLocalIpsWithMdns",
+            "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --enable-accelerated-video-decode --enable-accelerated-video-encode --webrtc-max-cpu-consumption-percentage=100 --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-ipc-flooding-protection --autoplay-policy=no-user-gesture-required --enable-features=CanvasOopRasterization,WebRtcMetronome,PlatformHEVCDecoderSupport --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,WebRtcHideLocalIpsWithMdns",
         );
     }
 

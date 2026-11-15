@@ -12,14 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "MashVoice — Singularity 4.4 P2P",
+        "title": "MashVoice 5.0 — Communication P2P Zero-IP",
         "width": 1440,
         "height": 900,
         "minWidth": 1024,
         "minHeight": 680,
         "decorations": false,
-        "backgroundColor": "#030305",
-        "additionalBrowserArgs": "--disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-ipc-flooding-protection --autoplay-policy=no-user-gesture-required --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,WebRtcHideLocalIpsWithMdns"
+        "backgroundColor": "#090a0d",
+        "additionalBrowserArgs": "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --enable-accelerated-video-decode --enable-accelerated-video-encode --webrtc-max-cpu-consumption-percentage=100 --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --disable-ipc-flooding-protection --autoplay-policy=no-user-gesture-required --enable-features=CanvasOopRasterization,WebRtcMetronome,PlatformHEVCDecoderSupport --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,WebRtcHideLocalIpsWithMdns"
       }
     ],
     "security": {

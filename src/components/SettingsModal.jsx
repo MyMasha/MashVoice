@@ -788,7 +788,7 @@ export default function SettingsModal({
                   <span>Résolution &amp; Cadence FPS des Streams P2P</span>
                   <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--emerald)' }}>
                     {normalizeResolutionKey(streamSettings.resolution)} · {streamSettings.fps} FPS ·{' '}
-                    {((streamSettings.maxBitrateKbps || 10500) / 1000).toFixed(1)} Mbps
+                    {((streamSettings.maxBitrateKbps || 16500) / 1000).toFixed(1)} Mbps
                   </span>
                 </div>
 
@@ -844,9 +844,33 @@ export default function SettingsModal({
                   </div>
                 </div>
 
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 2 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    Priorité d&apos;encodage en mouvement rapide (Minecraft / FPS)
+                  </span>
+                  <div className="mv-seg" style={{ gridTemplateColumns: 'auto auto' }}>
+                    <button
+                      type="button"
+                      className={`mv-seg-btn ${!streamSettings.maintainFramerate ? 'active' : ''}`}
+                      style={{ padding: '4px 10px', fontSize: 11.5 }}
+                      onClick={() => onUpdateStreamSettings({ maintainFramerate: false })}
+                    >
+                      Netteté 1:1 · Anti-Flou
+                    </button>
+                    <button
+                      type="button"
+                      className={`mv-seg-btn ${streamSettings.maintainFramerate ? 'active' : ''}`}
+                      style={{ padding: '4px 10px', fontSize: 11.5 }}
+                      onClick={() => onUpdateStreamSettings({ maintainFramerate: true })}
+                    >
+                      Connexion faible · FPS
+                    </button>
+                  </div>
+                </div>
+
                 <div style={{ marginTop: 4 }}>
                   <div className="field-label">
-                    <span>Débit Vidéo Maximum (Bitrate P2P)</span>
+                    <span>Débit Vidéo Maximum (Bitrate P2P CABAC / AV1)</span>
                     <button
                       type="button"
                       className="btn-chip"
@@ -866,11 +890,11 @@ export default function SettingsModal({
                   </div>
                   <input
                     type="range"
-                    min={2000}
-                    max={45000}
+                    min={2500}
+                    max={65000}
                     step={500}
                     className="range-slider"
-                    value={streamSettings.maxBitrateKbps || 10500}
+                    value={streamSettings.maxBitrateKbps || 16500}
                     onChange={(e) =>
                       onUpdateStreamSettings({
                         customBitrate: true,
@@ -891,7 +915,7 @@ export default function SettingsModal({
                     color: 'var(--text-secondary)',
                   }}
                 >
-                  <strong style={{ color: 'var(--emerald)' }}>Anti-Freeze Minecraft &amp; Zéro Barre en Jeu actifs</strong> — la barre flottante « partage votre écran » est masquée sous Windows et le mode Anti-Occlusion empêche le gel d&apos;image en Plein Écran F11.
+                  <strong style={{ color: 'var(--emerald)' }}>H.264 High Profile CABAC · Latence ~25 ms · Zéro Barre en Jeu</strong> — verrouillage pixel 1:1 actif pour éliminer le flou en mouvement rapide et décodage matériel D3D11 Zero-Copy côté spectateur.
                 </div>
               </div>
             </>

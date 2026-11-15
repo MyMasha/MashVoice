@@ -1381,26 +1381,33 @@ code {
 .stream-stage-panel {
   background: #0b0d12;
   border-bottom: 1px solid var(--border-subtle);
-  padding: 14px 18px;
+  padding: 12px 18px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   z-index: 3;
 }
 
 .stream-stage-panel.expanded {
   flex: 1;
+  min-height: 0;
 }
 
 .stream-tiles-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 12px;
-  max-height: 440px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  max-height: 540px;
+}
+
+.stream-tiles-grid.has-video-spotlight {
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  max-height: none;
 }
 
 .stream-stage-panel.expanded .stream-tiles-grid {
   flex: 1;
+  min-height: 0;
   max-height: none;
 }
 
@@ -1417,6 +1424,29 @@ code {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+.stream-tile.featured-stream {
+  grid-column: 1 / -1;
+  aspect-ratio: 16 / 9;
+  max-height: 56vh;
+  width: 100%;
+  background: #050608;
+  border-color: var(--border-strong);
+}
+
+.stream-stage-panel.expanded .stream-tile.featured-stream {
+  max-height: calc(100vh - 210px);
+  flex: 1;
+}
+
+.stream-tile.voice-only-tile {
+  aspect-ratio: auto;
+  height: 52px;
+  padding: 0 12px;
+  justify-content: flex-start;
+  gap: 10px;
+  background: var(--bg-card);
+}
+
 .stream-tile.speaking {
   border-color: rgba(62, 207, 142, 0.55);
   box-shadow: 0 0 0 1px rgba(62, 207, 142, 0.35);
@@ -1427,6 +1457,9 @@ code {
   height: 100%;
   object-fit: contain;
   background: #050608;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  will-change: contents;
 }
 
 .tile-overlay-top {
@@ -1437,7 +1470,58 @@ code {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   pointer-events: none;
+}
+
+.tile-overlay-bottom {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.stream-tile:hover .tile-overlay-bottom {
+  opacity: 1;
+}
+
+.tile-res-pill {
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(9, 10, 13, 0.82);
+  border: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--emerald);
+}
+
+.tile-ctrl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(14, 16, 21, 0.88);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+
+.tile-ctrl-btn:hover {
+  background: var(--bg-elevated);
+  border-color: var(--gold-border);
+  color: var(--gold-bright);
 }
 
 .tile-badge {

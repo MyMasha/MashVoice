@@ -391,7 +391,7 @@ export class GlobalP2PMesh {
         this.wsReady = false;
         this.emitStatus();
         if (!this.destroyed) {
-          this.reconnectTimer = setTimeout(() => this.connectWebSocket(), 3500);
+          this.reconnectTimer = setTimeout(() => this.connectWebSocket(), 1200);
         }
       };
 
@@ -400,7 +400,7 @@ export class GlobalP2PMesh {
       this.wsReady = false;
       this.emitStatus();
       if (!this.destroyed) {
-        this.reconnectTimer = setTimeout(() => this.connectWebSocket(), 4500);
+        this.reconnectTimer = setTimeout(() => this.connectWebSocket(), 2000);
       }
     }
   }
@@ -854,7 +854,16 @@ export class GlobalP2PMesh {
 
   async sendWebRtcSignal(targetPeerKey, roomId, signal) {
     if (!targetPeerKey || !this.me) return;
-    const selfWithPub = await this.enrichSelfProfile();
+    const { pubB64u } = await ensureLocalEcdhIdentity();
+    const slimSelf = {
+      id: this.me.id,
+      peerId: this.me.peerId,
+      username: this.me.username,
+      displayName: this.me.displayName,
+      tag: this.me.tag,
+      avatarColor: this.me.avatarColor,
+      ecdhPub: pubB64u,
+    };
     const remotePub = lookupPeerPublicKey(targetPeerKey);
     const pid = normTopicKey(targetPeerKey);
     await this.publish(
@@ -862,11 +871,11 @@ export class GlobalP2PMesh {
       {
         type: 'webrtc:signal',
         fromPeerKey: this.me.peerId,
-        fromUser: selfWithPub,
+        fromUser: slimSelf,
         roomId,
         signal,
       },
-      { storeOffline: false, remoteEcdhPub: remotePub }
+      { storeOffline: false, ttlSec: 60, remoteEcdhPub: remotePub }
     );
   }
 
